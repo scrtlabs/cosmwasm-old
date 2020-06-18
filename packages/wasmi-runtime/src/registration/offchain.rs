@@ -1,16 +1,17 @@
-use log::*;
-use sgx_types::{sgx_quote_sign_type_t, sgx_status_t};
 ///
 /// These functions run off chain, and so are not limited by deterministic limitations. Feel free
 /// to go crazy with random generation entropy, time requirements, or whatever else
 ///
+use log::*;
+use sgx_types::{sgx_quote_sign_type_t, sgx_status_t};
+
 use std::slice;
 
 use crate::consts::{
     ATTESTATION_CERTIFICATE_SAVE_PATH, ENCRYPTED_SEED_SIZE, IO_CERTIFICATE_SAVE_PATH,
     SEED_EXCH_CERTIFICATE_SAVE_PATH,
 };
-use crate::crypto::{Keychain, Seed, PUBLIC_KEY_SIZE};
+use crate::crypto::{Keychain, KEY_MANAGER, PUBLIC_KEY_SIZE};
 use crate::storage::write_to_untrusted;
 use crate::utils::{attest_from_key, validate_const_ptr, validate_mut_ptr, validate_mut_slice};
 
@@ -28,21 +29,21 @@ use super::seed_exchange::decrypt_seed;
 ///
 #[no_mangle]
 pub extern "C" fn ecall_init_bootstrap(public_key: &mut [u8; PUBLIC_KEY_SIZE]) -> sgx_status_t {
-    if let Err(e) = validate_mut_ptr(public_key.as_mut_ptr(), public_key.len()) {
+    if let Err(_e) = validate_mut_ptr(public_key.as_mut_ptr(), public_key.len()) {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
     let mut key_manager = Keychain::new();
 
-    if let Err(e) = key_manager.create_consensus_seed() {
+    if let Err(_e) = key_manager.create_consensus_seed() {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
-    if let Err(e) = key_manager.generate_consensus_master_keys() {
+    if let Err(_e) = key_manager.generate_consensus_master_keys() {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
-    if let Err(e) = key_manager.create_registration_key() {
+    if let Err(_e) = key_manager.create_registration_key() {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
@@ -78,6 +79,8 @@ pub extern "C" fn ecall_init_bootstrap(public_key: &mut [u8; PUBLIC_KEY_SIZE]) -
 /// This function happens off-chain, so if we panic for some reason it _can_ be acceptable,
 ///  though probably not recommended
 ///
+/// # Safety
+///  Something should go here
 ///
 #[no_mangle]
 pub unsafe extern "C" fn ecall_init_node(
@@ -86,11 +89,11 @@ pub unsafe extern "C" fn ecall_init_node(
     encrypted_seed: *const u8,
     encrypted_seed_len: u32,
 ) -> sgx_status_t {
-    if let Err(e) = validate_const_ptr(master_cert, master_cert_len as usize) {
+    if let Err(_e) = validate_const_ptr(master_cert, master_cert_len as usize) {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
-    if let Err(e) = validate_const_ptr(encrypted_seed, encrypted_seed_len as usize) {
+    if let Err(_e) = validate_const_ptr(encrypted_seed, encrypted_seed_len as usize) {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
@@ -132,24 +135,16 @@ pub unsafe extern "C" fn ecall_init_node(
     target_public_key.copy_from_slice(&pk);
 
     let mut key_manager = Keychain::new();
-    let res = match decrypt_seed(&key_manager, target_public_key, encrypted_seed) {
+    let seed = match decrypt_seed(&key_manager, target_public_key, encrypted_seed) {
         Ok(result) => result,
         Err(status) => return status,
     };
 
-    let mut seed_buf: [u8; 32] = [0u8; 32];
-    seed_buf.copy_from_slice(&res);
-
-    // todo: remove this before production O.o
-    info!("Decrypted seed: {:?}", seed_buf);
-
-    let seed = Seed::new_from_slice(&seed_buf);
-
-    if let Err(e) = key_manager.set_consensus_seed(seed) {
+    if let Err(_e) = key_manager.set_consensus_seed(seed) {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
-    if let Err(e) = key_manager.generate_consensus_master_keys() {
+    if let Err(_e) = key_manager.generate_consensus_master_keys() {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
@@ -170,13 +165,12 @@ pub unsafe extern "C" fn ecall_init_node(
  * other creative usages.
  */
 pub extern "C" fn ecall_get_attestation_report() -> sgx_status_t {
-    let mut key_manager = Keychain::new();
-    let kp = key_manager.get_registration_key().unwrap();
+    let kp = KEY_MANAGER.get_registration_key().unwrap();
     info!(
         "ecall_get_attestation_report key pk: {:?}",
         &kp.get_pubkey().to_vec()
     );
-    let (private_key_der, cert) = match create_attestation_certificate(
+    let (_private_key_der, cert) = match create_attestation_certificate(
         &kp,
         sgx_quote_sign_type_t::SGX_UNLINKABLE_SIGNATURE,
     ) {
@@ -202,12 +196,15 @@ pub extern "C" fn ecall_get_attestation_report() -> sgx_status_t {
 pub unsafe extern "C" fn ecall_key_gen(
     public_key: &mut [u8; PUBLIC_KEY_SIZE],
 ) -> sgx_types::sgx_status_t {
-    if let Err(e) = validate_mut_slice(public_key) {
+    if let Err(_e) = validate_mut_slice(public_key) {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
 
     let mut key_manager = Keychain::new();
-    key_manager.create_registration_key();
+    if let Err(_e) = key_manager.create_registration_key() {
+        error!("Failed to create registration key");
+        return sgx_status_t::SGX_ERROR_UNEXPECTED;
+    };
 
     let pubkey = key_manager.get_registration_key().unwrap().get_pubkey();
     public_key.clone_from_slice(&pubkey);

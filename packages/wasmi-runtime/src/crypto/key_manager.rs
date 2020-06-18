@@ -21,12 +21,12 @@ impl Keychain {
     pub fn new() -> Self {
         let consensus_seed = match Seed::unseal(CONSENSUS_SEED_SEALING_PATH) {
             Ok(k) => Some(k),
-            Err(e) => None,
+            Err(_e) => None,
         };
 
         let registration_key = match KeyPair::unseal(REGISTRATION_KEY_SEALING_PATH) {
             Ok(k) => Some(k),
-            Err(e) => None,
+            Err(_e) => None,
         };
 
         let mut x = Keychain {
@@ -37,15 +37,15 @@ impl Keychain {
             consensus_io_exchange_keypair: None,
         };
 
-        x.generate_consensus_master_keys();
+        let _ = x.generate_consensus_master_keys();
 
-        return x;
+        x
     }
 
     pub fn create_consensus_seed(&mut self) -> Result<(), CryptoError> {
         match Seed::new() {
             Ok(seed) => {
-                if let Err(e) = self.set_consensus_seed(seed) {
+                if let Err(_e) = self.set_consensus_seed(seed) {
                     return Err(CryptoError::KeyError);
                 }
             }
@@ -57,7 +57,7 @@ impl Keychain {
     pub fn create_registration_key(&mut self) -> Result<(), CryptoError> {
         match KeyPair::new() {
             Ok(key) => {
-                if let Err(e) = self.set_registration_key(key) {
+                if let Err(_e) = self.set_registration_key(key) {
                     return Err(CryptoError::KeyError);
                 }
             }
@@ -66,24 +66,24 @@ impl Keychain {
         Ok(())
     }
 
-    pub fn is_registration_key_set(&self) -> bool {
-        return self.registration_key.is_some();
-    }
+    // pub fn is_registration_key_set(&self) -> bool {
+    //     return self.registration_key.is_some();
+    // }
+    //
+    // pub fn is_consensus_state_ikm_set(&self) -> bool {
+    //     return self.consensus_state_ikm.is_some();
+    // }
 
-    pub fn is_consensus_state_ikm_set(&self) -> bool {
-        return self.consensus_state_ikm.is_some();
-    }
+    // pub fn is_consensus_seed_exchange_keypair_set(&self) -> bool {
+    //     return self.consensus_seed_exchange_keypair.is_some();
+    // }
 
-    pub fn is_consensus_seed_exchange_keypair_set(&self) -> bool {
-        return self.consensus_seed_exchange_keypair.is_some();
-    }
-
-    pub fn is_consensus_io_exchange_keypair_set(&self) -> bool {
-        return self.consensus_io_exchange_keypair.is_some();
-    }
+    // pub fn is_consensus_io_exchange_keypair_set(&self) -> bool {
+    //     return self.consensus_io_exchange_keypair.is_some();
+    // }
 
     pub fn is_consensus_seed_set(&self) -> bool {
-        return self.consensus_seed.is_some();
+        self.consensus_seed.is_some()
     }
 
     pub fn get_consensus_state_ikm(&self) -> Result<AESKey, CryptoError> {
@@ -139,19 +139,20 @@ impl Keychain {
             error!("Error sealing registration key");
             return Err(e);
         }
-        Ok(self.registration_key = Some(kp.clone()))
+        self.registration_key = Some(kp);
+        Ok(())
     }
 
     pub fn set_consensus_seed_exchange_keypair(&mut self, kp: KeyPair) {
-        self.consensus_seed_exchange_keypair = Some(kp.clone())
+        self.consensus_seed_exchange_keypair = Some(kp)
     }
 
     pub fn set_consensus_io_exchange_keypair(&mut self, kp: KeyPair) {
-        self.consensus_io_exchange_keypair = Some(kp.clone())
+        self.consensus_io_exchange_keypair = Some(kp)
     }
 
     pub fn set_consensus_state_ikm(&mut self, consensus_state_ikm: AESKey) {
-        self.consensus_state_ikm = Some(consensus_state_ikm.clone());
+        self.consensus_state_ikm = Some(consensus_state_ikm);
     }
 
     pub fn set_consensus_seed(&mut self, consensus_seed: Seed) -> Result<(), EnclaveError> {
@@ -159,7 +160,8 @@ impl Keychain {
             error!("Error sealing consensus_seed");
             return Err(e);
         }
-        Ok(self.consensus_seed = Some(consensus_seed.clone()))
+        self.consensus_seed = Some(consensus_seed);
+        Ok(())
     }
 
     pub fn generate_consensus_master_keys(&mut self) -> Result<(), EnclaveError> {
@@ -174,19 +176,10 @@ impl Keychain {
             .consensus_seed
             .unwrap()
             .derive_key_from_this(&CONSENSUS_SEED_EXCHANGE_KEYPAIR_DERIVE_ORDER.to_be_bytes());
-        let consensus_seed_exchange_keypair = KeyPair::new_from_slice(
-            consensus_seed_exchange_keypair_bytes.get().clone(),
-        )
-        .map_err(|err| {
-            error!(
-                "[Enclave] Error creating consensus_seed_exchange_keypair: {:?}",
-                err
-            );
-            EnclaveError::FailedUnseal /* change error type? */
-        })?;
+        let consensus_seed_exchange_keypair = KeyPair::from(consensus_seed_exchange_keypair_bytes);
         info!(
             "consensus_seed_exchange_keypair: {:?}",
-            consensus_seed_exchange_keypair
+            consensus_seed_exchange_keypair.get_pubkey()
         );
         self.set_consensus_seed_exchange_keypair(consensus_seed_exchange_keypair);
 
@@ -196,30 +189,21 @@ impl Keychain {
             .consensus_seed
             .unwrap()
             .derive_key_from_this(&CONSENSUS_IO_EXCHANGE_KEYPAIR_DERIVE_ORDER.to_be_bytes());
-        let consensus_io_exchange_keypair = KeyPair::new_from_slice(
-            consensus_io_exchange_keypair_bytes.get().clone(),
-        )
-        .map_err(|err| {
-            error!(
-                "[Enclave] Error creating consensus_io_exchange_keypair: {:?}",
-                err
-            );
-            EnclaveError::FailedUnseal /* change error type? */
-        })?;
+        let consensus_io_exchange_keypair = KeyPair::from(consensus_io_exchange_keypair_bytes);
         info!(
             "consensus_io_exchange_keypair: {:?}",
-            consensus_io_exchange_keypair
+            consensus_io_exchange_keypair.get_pubkey()
         );
         self.set_consensus_io_exchange_keypair(consensus_io_exchange_keypair);
 
         // consensus_state_ikm
 
-        let consensus_state_ikm_bytes = self
+        let consensus_state_ikm = self
             .consensus_seed
             .unwrap()
             .derive_key_from_this(&CONSENSUS_STATE_IKM_DERIVE_ORDER.to_be_bytes());
-        let consensus_state_ikm = AESKey::new_from_slice(consensus_state_ikm_bytes.get());
-        info!("consensus_state_ikm: {:?}", consensus_state_ikm);
+
+        info!("consensus_state_ikm: {:?}", consensus_state_ikm.get());
         self.set_consensus_state_ikm(consensus_state_ikm);
 
         Ok(())

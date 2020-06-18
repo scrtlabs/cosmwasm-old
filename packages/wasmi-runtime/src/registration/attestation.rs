@@ -1,18 +1,25 @@
-use super::hex;
-#[cfg(feature = "SGX_MODE_HW")]
-use crate::consts::{API_KEY_FILE, SPID_FILE};
-use crate::crypto::KeyPair;
-#[cfg(feature = "SGX_MODE_HW")]
-use crate::imports::{ocall_get_ias_socket, ocall_get_quote, ocall_sgx_init_quote};
+#![cfg_attr(not(feature = "SGX_MODE_HW"), allow(unused))]
+
 #[cfg(feature = "SGX_MODE_HW")]
 use itertools::Itertools;
 use log::*;
 #[cfg(feature = "SGX_MODE_HW")]
-use sgx_rand::*;
-use sgx_tcrypto::*;
+use sgx_rand::{os, Rng};
+use sgx_tcrypto::{rsgx_sha256_slice, SgxEccHandle};
 #[cfg(feature = "SGX_MODE_HW")]
-use sgx_tse::*;
-use sgx_types::*;
+use sgx_tse::{rsgx_create_report, rsgx_verify_report};
+
+#[cfg(not(feature = "SGX_MODE_HW"))]
+use sgx_types::{sgx_create_report, SgxResult};
+
+use sgx_types::{
+    c_int, sgx_quote_sign_type_t, sgx_report_data_t, sgx_report_t, sgx_spid_t, sgx_status_t,
+    sgx_target_info_t,
+};
+
+#[cfg(feature = "SGX_MODE_HW")]
+use sgx_types::{sgx_epid_group_id_t, sgx_quote_nonce_t};
+
 use std::io::Read;
 #[cfg(feature = "SGX_MODE_HW")]
 use std::io::Write;
@@ -27,7 +34,16 @@ use std::sync::Arc;
 use std::untrusted::fs;
 use std::vec::Vec;
 
-pub const DEV_HOSTNAME: &'static str = "api.trustedservices.intel.com";
+#[cfg(feature = "SGX_MODE_HW")]
+use crate::consts::{API_KEY_FILE, SPID_FILE};
+use crate::crypto::KeyPair;
+#[cfg(feature = "SGX_MODE_HW")]
+use crate::imports::{ocall_get_ias_socket, ocall_get_quote, ocall_sgx_init_quote};
+use crate::registration::report::EndorsedAttestationReport;
+
+use super::hex;
+
+pub const DEV_HOSTNAME: &str = "api.trustedservices.intel.com";
 
 #[cfg(feature = "production")]
 pub const SIGRL_SUFFIX: &str = "/sgx/attestation/v4/sigrl/";
@@ -39,10 +55,8 @@ pub const SIGRL_SUFFIX: &str = "/sgx/dev/attestation/v4/sigrl/";
 #[cfg(not(feature = "production"))]
 pub const REPORT_SUFFIX: &str = "/sgx/dev/attestation/v4/report";
 
-pub const CERTEXPIRYDAYS: i64 = 90i64;
-
-// extra_data size (limit to 64)
-static REPORT_DATA_SIZE: usize = 32;
+// extra_data size that will store the public key of the attesting node
+const REPORT_DATA_SIZE: usize = 32;
 
 #[cfg(not(feature = "SGX_MODE_HW"))]
 pub fn create_attestation_certificate(
@@ -54,23 +68,13 @@ pub fn create_attestation_certificate(
     let _result = ecc_handle.open();
 
     // convert keypair private to sgx ecc private
-    let prv_k = sgx_ec256_private_t {
-        r: kp.get_privkey(),
-    };
-    // generate the P256 public (will be different from KeyPair's public key)
-    let pub_k = rsgx_ecc256_pub_from_priv(&prv_k).unwrap();
+    let (prv_k, pub_k) = ecc_handle.create_key_pair().unwrap();
 
     // this is the ed25519 public key we want to encode
     let encoded_pubkey = base64::encode(&kp.get_pubkey());
 
     let (key_der, cert_der) =
-        match super::cert::gen_ecc_cert(encoded_pubkey, &prv_k, &pub_k, &ecc_handle) {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Error in gen_ecc_cert: {:?}", e);
-                return Err(e);
-            }
-        };
+        super::cert::gen_ecc_cert(encoded_pubkey, &prv_k, &pub_k, &ecc_handle)?;
     let _result = ecc_handle.close();
 
     Ok((key_der, cert_der))
@@ -107,7 +111,7 @@ pub fn create_report_with_data(
         }
         Err(err) => {
             // println!("[-] Enclave: error creating report");
-            sgx_status_t::from(err)
+            err
         }
     }
 }
@@ -119,29 +123,14 @@ pub fn create_attestation_certificate(
     sign_type: sgx_quote_sign_type_t,
 ) -> Result<(Vec<u8>, Vec<u8>), sgx_status_t> {
     // extract private key from KeyPair
-    let mut priv_key_buf: [u8; 32] = [0u8; 32];
-    priv_key_buf.copy_from_slice(&kp.get_privkey());
-
-    // extra public key from KeyPair
-    let mut pub_key_secp256k1: [u8; 64] = [0u8; 64];
-    pub_key_secp256k1.copy_from_slice(&kp.get_pubkey()[1..65]);
-
-    // init sgx ecc
     let ecc_handle = SgxEccHandle::new();
     let _result = ecc_handle.open();
 
-    // convert keypair private to sgx ecc private
-    let prv_k = sgx_ec256_private_t {
-        r: priv_key_buf.clone(),
-    };
-    // generate the P256 public (will be different from KeyPair's public key)
-    let pub_k = rsgx_ecc256_pub_from_priv(&prv_k).unwrap();
-
-    // if we want to use ephemeral certificates, we can do this
-    // let (prv_k, pub_k) = ecc_handle.create_key_pair().unwrap();
+    // use ephemeral key
+    let (prv_k, pub_k) = ecc_handle.create_key_pair().unwrap();
 
     // call create_report using the secp256k1 public key, and __not__ the P256 one
-    let (attn_report, sig, cert) = match create_attestation_report(&pub_key_secp256k1, sign_type) {
+    let signed_report = match create_attestation_report(&kp.get_pubkey(), sign_type) {
         Ok(r) => r,
         Err(e) => {
             error!("Error in create_attestation_report: {:?}", e);
@@ -149,15 +138,11 @@ pub fn create_attestation_certificate(
         }
     };
 
-    let payload = attn_report + "|" + &sig + "|" + &cert;
-    let (key_der, cert_der) = match super::cert::gen_ecc_cert(payload, &prv_k, &pub_k, &ecc_handle)
-    {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Error in gen_ecc_cert: {:?}", e);
-            return Err(e);
-        }
-    };
+    let payload: String = serde_json::to_string(&signed_report).map_err(|_| {
+        error!("Error serializing report");
+        sgx_status_t::SGX_ERROR_UNEXPECTED
+    })?;
+    let (key_der, cert_der) = super::cert::gen_ecc_cert(payload, &prv_k, &pub_k, &ecc_handle)?;
     let _result = ecc_handle.close();
 
     Ok((key_der, cert_der))
@@ -167,9 +152,9 @@ pub fn create_attestation_certificate(
 #[cfg(feature = "SGX_MODE_HW")]
 #[allow(const_err)]
 pub fn create_attestation_report(
-    pub_k: &[u8; 64],
+    pub_k: &[u8; 32],
     sign_type: sgx_quote_sign_type_t,
-) -> Result<(String, String, String), sgx_status_t> {
+) -> Result<EndorsedAttestationReport, sgx_status_t> {
     // Workflow:
     // (1) ocall to get the target_info structure (ti) and epid group id (eg)
     // (1.5) get sigrl
@@ -199,7 +184,7 @@ pub fn create_attestation_report(
         return Err(rt);
     }
 
-    let eg_num = as_u32_le(&eg);
+    let eg_num = as_u32_le(eg);
 
     // (1.5) get sigrl
     let mut ias_sock: i32 = 0;
@@ -224,7 +209,7 @@ pub fn create_attestation_report(
     // Fill ecc256 public key into report_data
     let mut report_data: sgx_report_data_t = sgx_report_data_t::default();
 
-    report_data.d[..64].copy_from_slice(pub_k);
+    report_data.d[..32].copy_from_slice(pub_k);
 
     /* This is used to match the encoding of the public key here with the ecc key, but honestly
     the certificate uses curve P256, so that will cause issues anyway -- I'm leaving the code here
@@ -268,7 +253,7 @@ pub fn create_attestation_report(
     //       7. [out]p_qe_report need further check
     //       8. [out]p_quote
     //       9. quote_size
-    let (p_sigrl, sigrl_len) = if sigrl_vec.len() == 0 {
+    let (p_sigrl, sigrl_len) = if sigrl_vec.is_empty() {
         (ptr::null(), 0)
     } else {
         (sigrl_vec.as_ptr(), sigrl_vec.len() as u32)
@@ -350,7 +335,7 @@ pub fn create_attestation_report(
     let mut rhs_vec: Vec<u8> = quote_nonce.rand.to_vec();
     rhs_vec.extend(&return_quote_buf[..quote_len as usize]);
     let rhs_hash = rsgx_sha256_slice(&rhs_vec[..]).unwrap();
-    let lhs_hash = &qe_report.body.report_data.d[..32];
+    let lhs_hash = &qe_report.body.report_data.d[..REPORT_DATA_SIZE];
 
     debug!("Report rhs hash = {:02X}", rhs_hash.iter().format(""));
     debug!("Report lhs hash = {:02X}", lhs_hash.iter().format(""));
@@ -372,12 +357,16 @@ pub fn create_attestation_report(
         return Err(rt);
     }
 
-    let (attn_report, sig, cert) = get_report_from_intel(ias_sock, quote_vec);
-    Ok((attn_report, sig, cert))
+    let (attn_report, signature, signing_cert) = get_report_from_intel(ias_sock, quote_vec);
+    Ok(EndorsedAttestationReport {
+        report: attn_report.into_bytes(),
+        signature,
+        signing_cert,
+    })
 }
 
 #[cfg(feature = "SGX_MODE_HW")]
-fn parse_response_attn_report(resp: &[u8]) -> (String, String, String) {
+fn parse_response_attn_report(resp: &[u8]) -> (String, Vec<u8>, Vec<u8>) {
     debug!("parse_response_attn_report");
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut respp = httparse::Response::new(&mut headers);
@@ -441,8 +430,10 @@ fn parse_response_attn_report(resp: &[u8]) -> (String, String, String) {
         info!("Attestation report: {}", attn_report);
     }
 
+    let sig_bytes = base64::decode(&sig).unwrap();
+    let sig_cert_bytes = base64::decode(&sig_cert).unwrap();
     // len_num == 0
-    (attn_report, sig, sig_cert)
+    (attn_report, sig_bytes, sig_cert_bytes)
 }
 
 #[cfg(feature = "SGX_MODE_HW")]
@@ -548,7 +539,7 @@ pub fn get_sigrl_from_intel(fd: c_int, gid: u32) -> Vec<u8> {
 
 // TODO: support pse
 #[cfg(feature = "SGX_MODE_HW")]
-pub fn get_report_from_intel(fd: c_int, quote: Vec<u8>) -> (String, String, String) {
+pub fn get_report_from_intel(fd: c_int, quote: Vec<u8>) -> (String, Vec<u8>, Vec<u8>) {
     info!("get_report_from_intel fd = {:?}", fd);
     let config = make_ias_client_config();
     let encoded_quote = base64::encode(&quote[..]);
@@ -585,8 +576,8 @@ pub fn get_report_from_intel(fd: c_int, quote: Vec<u8>) -> (String, String, Stri
 }
 
 #[cfg(feature = "SGX_MODE_HW")]
-fn as_u32_le(array: &[u8; 4]) -> u32 {
-    ((array[0] as u32) << 0)
+fn as_u32_le(array: [u8; 4]) -> u32 {
+    (array[0] as u32)
         + ((array[1] as u32) << 8)
         + ((array[2] as u32) << 16)
         + ((array[3] as u32) << 24)
@@ -616,12 +607,11 @@ fn get_ias_api_key() -> String {
 
 #[cfg(feature = "test")]
 pub mod tests {
-
-    use super::{create_attestation_certificate, get_ias_api_key, load_spid};
     use crate::crypto::KeyPair;
     use crate::registration::cert::verify_ra_cert;
 
     use super::sgx_quote_sign_type_t;
+    use super::{create_attestation_certificate, get_ias_api_key, load_spid};
 
     // todo: replace public key with real value
     fn test_create_attestation_certificate() {

@@ -1,6 +1,6 @@
 use log::*;
 use parity_wasm::elements;
-use wasmi::{ImportsBuilder, ModuleInstance};
+use wasmi::ModuleInstance;
 
 use enclave_ffi_types::{Ctx, EnclaveError};
 
@@ -9,13 +9,13 @@ use crate::results::{HandleSuccess, InitSuccess, QuerySuccess};
 use crate::wasm::contract_validation::ContractKey;
 
 use super::contract_validation::{
-    calc_contract_hash, extract_contract_key, generate_contract_id, generate_encryption_key,
-    generate_sender_id, validate_contract_key, CONTRACT_KEY_LENGTH,
+    extract_contract_key, generate_encryption_key, validate_contract_key, CONTRACT_KEY_LENGTH,
 };
 use super::errors::wasmi_error_to_enclave_error;
 use super::gas::{gas_rules, WasmCosts};
-use super::io::{decrypt_msg, encrypt_output};
-use super::runtime::{Engine, EnigmaImportResolver, Runtime};
+use super::io::encrypt_output;
+use super::runtime::{create_builder, ContractInstance, Engine, WasmiImportResolver};
+use crate::wasm::types::SecretMessage;
 
 /*
 Each contract is compiled with these functions alreadyy implemented in wasm:
@@ -57,10 +57,10 @@ pub fn init(
         .write_to_memory(env)
         .map_err(wasmi_error_to_enclave_error)?;
 
-    let (msg, user_pubkey, nonce) = decrypt_msg(msg)?;
+    let secret_msg = SecretMessage::from_slice(msg)?;
 
     let msg_ptr = engine
-        .write_to_memory(&msg)
+        .write_to_memory(&secret_msg.decrypt()?)
         .map_err(wasmi_error_to_enclave_error)?;
 
     let vec_ptr = engine
@@ -71,11 +71,9 @@ pub fn init(
         .extract_vector(vec_ptr)
         .map_err(wasmi_error_to_enclave_error)?;
 
-    let output = encrypt_output(&output, &user_pubkey, &nonce)?;
+    let output = encrypt_output(output, secret_msg.nonce, secret_msg.user_public_key)?;
 
-    // third time's the charm
-    // let output = append_contract_key(&output, encryption_key)?;
-
+    // todo: can move the key to somewhere in the output message if we want
     Ok(InitSuccess {
         output,
         used_gas: engine.gas_used(),
@@ -116,14 +114,20 @@ pub fn handle(
 
     let mut engine = start_engine(context, gas_limit, contract, &contract_key)?;
 
+    info!("AAAAAAAAAA msg = {:?}", msg);
+    let secret_msg = SecretMessage::from_slice(msg)?;
+
+    info!(
+        "(1) nonce after parse: nonce = {:?} pubkey = {:?}",
+        secret_msg.nonce, secret_msg.user_public_key
+    );
+
     let env_ptr = engine
         .write_to_memory(env)
         .map_err(wasmi_error_to_enclave_error)?;
 
-    let (msg, user_pubkey, nonce) = decrypt_msg(msg)?;
-
     let msg_ptr = engine
-        .write_to_memory(&msg)
+        .write_to_memory(&secret_msg.decrypt()?)
         .map_err(wasmi_error_to_enclave_error)?;
 
     let vec_ptr = engine
@@ -134,7 +138,11 @@ pub fn handle(
         .extract_vector(vec_ptr)
         .map_err(wasmi_error_to_enclave_error)?;
 
-    let output = encrypt_output(&output, &user_pubkey, &nonce)?;
+    info!(
+        "(2) nonce just before encrypt_output: nonce = {:?} pubkey = {:?}",
+        secret_msg.nonce, secret_msg.user_public_key
+    );
+    let output = encrypt_output(output, secret_msg.nonce, secret_msg.user_public_key)?;
 
     Ok(HandleSuccess {
         output,
@@ -166,10 +174,10 @@ pub fn query(
 
     let mut engine = start_engine(context, gas_limit, contract, &contract_key)?;
 
-    let (msg, user_pubkey, nonce) = decrypt_msg(msg)?;
+    let secret_msg = SecretMessage::from_slice(msg)?;
 
     let msg_ptr = engine
-        .write_to_memory(&msg)
+        .write_to_memory(&secret_msg.decrypt()?)
         .map_err(wasmi_error_to_enclave_error)?;
 
     let vec_ptr = engine
@@ -180,7 +188,7 @@ pub fn query(
         .extract_vector(vec_ptr)
         .map_err(wasmi_error_to_enclave_error)?;
 
-    let output = encrypt_output(&output, &user_pubkey, &nonce)?;
+    let output = encrypt_output(output, secret_msg.nonce, secret_msg.user_public_key)?;
 
     Ok(QuerySuccess {
         output,
@@ -216,28 +224,28 @@ fn start_engine(
 
     // Create new imports resolver.
     // These are the signatures of rust functions available to invoke from wasm code.
-    let imports = EnigmaImportResolver {};
-    let module_imports = ImportsBuilder::new().with_resolver("env", &imports);
+    let resolver = WasmiImportResolver {};
+    let imports_builder = create_builder(&resolver);
 
     // Instantiate a module with our imports and assert that there is no `start` function.
-    let instance =
-        ModuleInstance::new(&module, &module_imports).map_err(|_err| EnclaveError::InvalidWasm)?;
-    if instance.has_start() {
+    let module_instance =
+        ModuleInstance::new(&module, &imports_builder).map_err(|_err| EnclaveError::InvalidWasm)?;
+    if module_instance.has_start() {
         return Err(EnclaveError::WasmModuleWithStart);
     }
-    let instance = instance.not_started_instance().clone();
+    let module = module_instance.not_started_instance().clone();
 
-    let runtime = Runtime::new(
-        context,
-        instance
-            .export_by_name("memory")
-            .expect("Module expected to have 'memory' export")
-            .as_memory()
-            .cloned()
-            .expect("'memory' export should be of memory type"),
-        gas_limit,
-        contract_key.clone(),
-    );
+    // helping the IDE
+    let deref_module: &ModuleInstance = &*module;
 
-    Ok(Engine::new(runtime, instance))
+    let memory_ref = deref_module
+        .export_by_name("memory")
+        .expect("Module expected to have 'memory' export")
+        .as_memory()
+        .cloned()
+        .expect("'memory' export should be of memory type");
+
+    let contract_instance = ContractInstance::new(context, memory_ref, gas_limit, *contract_key);
+
+    Ok(Engine::new(contract_instance, module))
 }

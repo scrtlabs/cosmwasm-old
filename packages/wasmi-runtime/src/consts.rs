@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "SGX_MODE_HW"), allow(unused))]
+
 pub use enclave_ffi_types::ENCRYPTED_SEED_SIZE;
 
 #[cfg(feature = "production")]
@@ -10,10 +12,11 @@ pub static SPID_FILE: &str = "spid.txt";
 #[cfg(not(feature = "production"))]
 pub static API_KEY_FILE: &str = "api_key.txt";
 
-pub static RA_CERT: &str = "cert.pem";
-
 pub const CERTEXPIRYDAYS: i64 = 90i64;
 
+pub const BECH32_PREFIX_ACC_ADDR: &str = "enigma";
+
+#[allow(dead_code)]
 #[derive(PartialEq, Eq)]
 pub enum SigningMethod {
     MRSIGNER,
