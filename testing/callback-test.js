@@ -10,12 +10,6 @@ const assert = require("assert").strict;
   const client = new cosmwasmjs.CosmWasmClient("http://localhost:1337");
   const contract = (await client.getContracts(1))[0].address;
 
-  const resQuery = await client.queryContractSmart(contract, {
-    balance: { address: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4" },
-  });
-  const initBalance = +resQuery.balance;
-  console.log(`js: initBalance is ${initBalance}`);
-
   const pen = await cosmwasmjs.Secp256k1Pen.fromMnemonic(
     "cost member exercise evoke isolate gift cattle move bundle assume spell face balance lesson resemble orange bench surge now unhappy potato dress number acid"
   );
@@ -48,20 +42,40 @@ const assert = require("assert").strict;
   );
 
   const execTx = await signingClient.execute(contract, {
-    transfer: {
-      amount: "10",
-      recipient: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4",
+    a: { contract_addr: contract, x: 2, y: 3 },
+  });
+
+  const tx = await client.restClient.txById(execTx.transactionHash);
+
+  assert.deepEqual(execTx.logs, tx.logs);
+  assert.deepEqual(execTx.data, tx.data);
+  assert.deepEqual(tx.data.data, Uint8Array.from([65, 103, 77, 61]));
+
+  assert.deepEqual(tx.logs[0].events[1].attributes, [
+    {
+      key: "contract_address",
+      value: contract,
     },
-  });
-
-  const res2Query = await client.queryContractSmart(contract, {
-    balance: { address: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4" },
-  });
-
-  // const tx = await client.restClient.txById(execTx.transactionHash);
-
-  console.log(
-    `js: finalBalance is ${res2Query.balance} (should be ${initBalance + 10})`
-  );
-  assert.equal(+res2Query.balance, initBalance + 10);
+    {
+      key: "action",
+      value: "banana",
+    },
+    {
+      key: "contract_address",
+      value: contract,
+    },
+    {
+      key: "action",
+      value: "papaya",
+    },
+    {
+      key: "contract_address",
+      value: contract,
+    },
+    {
+      key: "action",
+      value: "watermelon",
+    },
+  ]);
+  console.log("ok");
 })();
