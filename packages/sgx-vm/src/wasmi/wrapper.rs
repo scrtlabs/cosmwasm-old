@@ -116,7 +116,7 @@ where
             imports::ecall_init(
                 self.enclave.geteid(),
                 init_result.as_mut_ptr(),
-                self.ctx.clone(),
+                self.ctx.unsafe_clone(),
                 self.gas_left,
                 self.bytecode.as_ptr(),
                 self.bytecode.len(),
@@ -162,7 +162,7 @@ where
             imports::ecall_handle(
                 self.enclave.geteid(),
                 handle_result.as_mut_ptr(),
-                self.ctx.clone(),
+                self.ctx.unsafe_clone(),
                 self.gas_left,
                 self.bytecode.as_ptr(),
                 self.bytecode.len(),
@@ -206,7 +206,7 @@ where
             imports::ecall_query(
                 self.enclave.geteid(),
                 query_result.as_mut_ptr(),
-                self.ctx.clone(),
+                self.ctx.unsafe_clone(),
                 self.gas_left,
                 self.bytecode.as_ptr(),
                 self.bytecode.len(),
