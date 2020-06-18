@@ -4,16 +4,22 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
+/*
 use crate::backends::{backend, compile};
+*/
 use crate::checksum::Checksum;
 use crate::compatability::check_wasm;
 use crate::errors::{VmError, VmResult};
 use crate::instance::Instance;
+/*
 use crate::modules::FileSystemCache;
+*/
 use crate::traits::{Api, Extern, Querier, Storage};
 
 static WASM_DIR: &str = "wasm";
+/*
 static MODULES_DIR: &str = "modules";
+*/
 
 #[derive(Debug, Default, Clone)]
 struct Stats {
@@ -24,7 +30,9 @@ struct Stats {
 pub struct CosmCache<S: Storage + 'static, A: Api + 'static, Q: Querier + 'static> {
     wasm_path: PathBuf,
     supported_features: HashSet<String>,
+    /*
     modules: FileSystemCache,
+    */
     stats: Stats,
     // Those two don't store data but only fix type information
     type_storage: PhantomData<S>,
@@ -57,12 +65,16 @@ where
         create_dir_all(&wasm_path)
             .map_err(|e| VmError::cache_err(format!("Error creating Wasm dir for cache: {}", e)))?;
 
+        /*
         let modules = FileSystemCache::new(base.join(MODULES_DIR))
             .map_err(|e| VmError::cache_err(format!("Error file system cache: {}", e)))?;
+        */
         Ok(CosmCache {
             wasm_path,
             supported_features,
+            /*
             modules,
+            */
             stats: Stats::default(),
             type_storage: PhantomData::<S>,
             type_api: PhantomData::<A>,
@@ -73,8 +85,10 @@ where
     pub fn save_wasm(&mut self, wasm: &[u8]) -> VmResult<Checksum> {
         check_wasm(wasm, &self.supported_features)?;
         let checksum = save_wasm_to_disk(&self.wasm_path, wasm)?;
+        /*
         let module = compile(wasm)?;
         self.modules.store(&checksum, module)?;
+        */
         Ok(checksum)
     }
 
@@ -101,12 +115,14 @@ where
         deps: Extern<S, A, Q>,
         gas_limit: u64,
     ) -> VmResult<Instance<S, A, Q>> {
+        /*
         // try from the module cache
         let res = self.modules.load_with_backend(checksum, backend());
         if let Ok(module) = res {
             self.stats.hits_module += 1;
             return Instance::from_module(&module, deps, gas_limit);
         }
+        */
 
         // fall back to wasm cache (and re-compiling) - this is for backends that don't support serialization
         let wasm = self.load_wasm(checksum)?;

@@ -6,7 +6,11 @@ use std::{
 use sgx_types::{sgx_attributes_t, sgx_launch_token_t, sgx_misc_attribute_t, SgxResult};
 use sgx_urts::SgxEnclave;
 
-pub fn init_enclave() -> SgxResult<SgxEnclave> {
+use lazy_static::lazy_static;
+
+static ENCLAVE_FILE: &'static str = "librust_cosmwasm_enclave.signed.so";
+
+fn init_enclave() -> SgxResult<SgxEnclave> {
     let mut launch_token: sgx_launch_token_t = [0; 1024];
     let mut launch_token_updated: i32 = 0;
     // call sgx_create_enclave to initialize an enclave instance
@@ -35,5 +39,12 @@ pub fn init_enclave() -> SgxResult<SgxEnclave> {
 }
 
 lazy_static! {
-    pub static ref SGX_ENCLAVE: SgxResult<SgxEnclave> = init_enclave();
+    static ref SGX_ENCLAVE: SgxResult<SgxEnclave> = init_enclave();
+}
+
+/// Use this method when trying to get access to the enclave.
+/// You can unwrap the result when you are certain that the enclave
+/// must have been initialized if you even reached that point in the code.
+pub fn get_enclave() -> SgxResult<&'static SgxEnclave> {
+    SGX_ENCLAVE.as_ref().map_err(|status| *status)
 }

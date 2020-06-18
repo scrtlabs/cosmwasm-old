@@ -4,15 +4,20 @@ use std::fmt;
 use cosmwasm_std::{Env, HandleResult, InitResult, MigrateResult, QueryResult};
 
 use crate::errors::{VmError, VmResult};
+/*
 use crate::instance::{Func, Instance};
+*/
+use crate::instance::Instance;
 use crate::serde::{from_slice, to_vec};
 use crate::traits::{Api, Querier, Storage};
 use schemars::JsonSchema;
 
+/*
 const MAX_LENGTH_INIT: usize = 100_000;
 const MAX_LENGTH_HANDLE: usize = 100_000;
 const MAX_LENGTH_MIGRATE: usize = 100_000;
 const MAX_LENGTH_QUERY: usize = 100_000;
+*/
 
 pub fn call_init<S, A, Q, U>(
     instance: &mut Instance<S, A, Q>,
@@ -90,7 +95,10 @@ pub fn call_init_raw<S: Storage + 'static, A: Api + 'static, Q: Querier + 'stati
     msg: &[u8],
 ) -> VmResult<Vec<u8>> {
     instance.set_storage_readonly(false);
+    /*
     call_raw(instance, "init", &[env, msg], MAX_LENGTH_INIT)
+    */
+    instance.call_init(env, msg)
 }
 
 /// Calls Wasm export "handle" and returns raw data from the contract.
@@ -101,7 +109,10 @@ pub fn call_handle_raw<S: Storage + 'static, A: Api + 'static, Q: Querier + 'sta
     msg: &[u8],
 ) -> VmResult<Vec<u8>> {
     instance.set_storage_readonly(false);
+    /*
     call_raw(instance, "handle", &[env, msg], MAX_LENGTH_HANDLE)
+    */
+    instance.call_handle(env, msg)
 }
 
 /// Calls Wasm export "migrate" and returns raw data from the contract.
@@ -112,7 +123,10 @@ pub fn call_migrate_raw<S: Storage + 'static, A: Api + 'static, Q: Querier + 'st
     msg: &[u8],
 ) -> VmResult<Vec<u8>> {
     instance.set_storage_readonly(false);
+    /*
     call_raw(instance, "migrate", &[env, msg], MAX_LENGTH_MIGRATE)
+    */
+    instance.call_migrate(env, msg)
 }
 
 /// Calls Wasm export "query" and returns raw data from the contract.
@@ -122,9 +136,13 @@ pub fn call_query_raw<S: Storage + 'static, A: Api + 'static, Q: Querier + 'stat
     msg: &[u8],
 ) -> VmResult<Vec<u8>> {
     instance.set_storage_readonly(true);
+    /*
     call_raw(instance, "query", &[msg], MAX_LENGTH_QUERY)
+    */
+    instance.call_query(msg)
 }
 
+#[cfg(not(feature = "default-enclave"))]
 fn call_raw<S: Storage + 'static, A: Api + 'static, Q: Querier + 'static>(
     instance: &mut Instance<S, A, Q>,
     name: &str,

@@ -8,7 +8,8 @@ use sgx_types::*;
 use sgx_types::{sgx_status_t, SgxResult};
 
 use enclave_ffi_types::ENCRYPTED_SEED_SIZE;
-// use crate::errors::Error;
+
+use crate::enclave::get_enclave;
 
 extern "C" {
     pub fn ecall_get_attestation_report(
@@ -121,8 +122,13 @@ pub extern "C" fn ocall_get_update_info(
     unsafe { sgx_report_attestation_status(platform_blob, enclave_trusted, update_info) }
 }
 
-pub fn inner_create_report(eid: sgx_enclave_id_t) -> SgxResult<sgx_status_t> {
+pub fn create_attestation_report_u() -> SgxResult<sgx_status_t> {
+    info!("Hello from just before initializing - create_attestation_report_u");
+    let enclave = get_enclave()?;
+    info!("Hello from just after initializing - create_attestation_report_u");
+
     info!("Entered produce report");
+    let eid = enclave.geteid();
     let mut retval = sgx_status_t::SGX_SUCCESS;
     let status = unsafe { ecall_get_attestation_report(eid, &mut retval) };
 
@@ -137,16 +143,24 @@ pub fn inner_create_report(eid: sgx_enclave_id_t) -> SgxResult<sgx_status_t> {
     Ok(sgx_status_t::SGX_SUCCESS)
 }
 
-pub fn inner_get_encrypted_seed(
-    eid: sgx_enclave_id_t,
-    cert: *const u8,
-    cert_len: u32,
-) -> SgxResult<[u8; ENCRYPTED_SEED_SIZE]> {
+pub fn untrusted_get_encrypted_seed(cert: &[u8]) -> SgxResult<[u8; ENCRYPTED_SEED_SIZE]> {
+    info!("Hello from just before initializing - untrusted_get_encrypted_seed");
+    let enclave = get_enclave()?;
+    info!("Hello from just after initializing - untrusted_get_encrypted_seed");
+
     info!("Entered produce report");
+    let eid = enclave.geteid();
     let mut retval = sgx_status_t::SGX_SUCCESS;
     let mut seed = [0u8; ENCRYPTED_SEED_SIZE];
-    let status =
-        unsafe { ecall_authenticate_new_node(eid, &mut retval, cert, cert_len, &mut seed) };
+    let status = unsafe {
+        ecall_authenticate_new_node(
+            eid,
+            &mut retval,
+            cert.as_ptr(),
+            cert.len() as u32,
+            &mut seed,
+        )
+    };
 
     if status != sgx_status_t::SGX_SUCCESS {
         return Err(status);

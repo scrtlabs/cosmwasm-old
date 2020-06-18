@@ -12,10 +12,6 @@ pub struct InitSuccess {
 }
 
 impl InitSuccess {
-    pub fn output(&self) -> &[u8] {
-        &self.output
-    }
-
     pub fn into_output(self) -> Vec<u8> {
         let mut out_vec = self.signature.to_vec();
         out_vec.extend_from_slice(&self.output);
@@ -57,10 +53,6 @@ pub struct HandleSuccess {
 }
 
 impl HandleSuccess {
-    pub fn output(&self) -> &[u8] {
-        &self.output
-    }
-
     pub fn into_output(self) -> Vec<u8> {
         self.output
     }
@@ -102,10 +94,6 @@ pub struct QuerySuccess {
 }
 
 impl QuerySuccess {
-    pub fn output(&self) -> &[u8] {
-        &self.output
-    }
-
     pub fn into_output(self) -> Vec<u8> {
         self.output
     }
@@ -133,27 +121,5 @@ pub fn query_result_to_result_querysuccess(
             signature,
         }),
         QueryResult::Failure { err } => Err(err),
-    }
-}
-
-/// This struct is returned from key-pair generation.
-pub struct KeyGenSuccess {
-    /// A pointer to the output of the execution
-    output: Vec<u8>,
-    /// A signature by the enclave on all of the results.
-    signature: [u8; 64],
-}
-
-impl KeyGenSuccess {
-    pub fn output(&self) -> &[u8] {
-        &self.output
-    }
-
-    pub fn into_output(self) -> Vec<u8> {
-        self.output
-    }
-
-    pub fn signature(&self) -> &[u8; 64] {
-        &self.signature
     }
 }

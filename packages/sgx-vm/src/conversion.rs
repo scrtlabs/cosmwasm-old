@@ -6,6 +6,7 @@ use crate::errors::{VmError, VmResult};
 
 /// Safely converts input of type T to u32.
 /// Errors with a cosmwasm_vm::errors::VmError::ConversionErr if conversion cannot be done.
+#[cfg(not(feature = "default-enclave"))]
 pub fn to_u32<T: TryInto<u32> + Display + Copy>(input: T) -> VmResult<u32> {
     input.try_into().map_err(|_| {
         VmError::conversion_err(type_name::<T>(), type_name::<u32>(), input.to_string())

@@ -1,7 +1,12 @@
+/*
 use std::collections::HashSet;
+*/
 use std::marker::PhantomData;
+/*
 use std::ptr::NonNull;
+*/
 
+/*
 pub use wasmer_runtime_core::typed_func::Func;
 use wasmer_runtime_core::{
     imports,
@@ -10,14 +15,18 @@ use wasmer_runtime_core::{
     vm::Ctx,
     Instance as WasmerInstance,
 };
+*/
 
-use crate::backends::{compile, get_gas_left, set_gas_limit};
+use crate::backends::get_gas_left;
 use crate::context::{
-    get_gas_state, move_into_context, move_out_of_context, set_storage_readonly,
-    set_wasmer_instance, setup_context, with_querier_from_context, with_storage_from_context,
+    move_into_context, move_out_of_context, set_storage_readonly, setup_context,
+    with_querier_from_context, with_storage_from_context,
 };
+/*
 use crate::conversion::to_u32;
-use crate::errors::{CommunicationError, VmError, VmResult};
+*/
+use crate::errors::{EnclaveError, VmResult};
+/*
 use crate::features::required_features_from_wasmer_instance;
 use crate::imports::{
     do_canonicalize_address, do_humanize_address, do_query_chain, do_read, do_remove, do_write,
@@ -25,17 +34,28 @@ use crate::imports::{
 #[cfg(feature = "iterator")]
 use crate::imports::{do_next, do_scan};
 use crate::memory::{get_memory_info, read_region, write_region};
+*/
 use crate::traits::{Api, Extern, Querier, Storage};
 
+use crate::enclave::get_enclave;
+use crate::wasmi::Module;
+
+/*
 static WASM_PAGE_SIZE: u64 = 64 * 1024;
+*/
 
 pub struct Instance<S: Storage + 'static, A: Api + 'static, Q: Querier + 'static> {
+    /*
     /// We put this instance in a box to maintain a constant memory address for the entire
     /// lifetime of the instance in the cache. This is needed e.g. when linking the wasmer
     /// instance to a context. See also https://github.com/CosmWasm/cosmwasm/pull/245
     inner: Box<WasmerInstance>,
+    */
+    inner: Module<S, Q>,
     pub api: A,
+    /*
     pub required_features: HashSet<String>,
+    */
     // This does not store data but only fixes type information
     type_storage: PhantomData<S>,
     type_querier: PhantomData<Q>,
@@ -50,10 +70,21 @@ where
     /// This is the only Instance constructor that can be called from outside of cosmwasm-vm,
     /// e.g. in test code that needs a customized variant of cosmwasm_vm::testing::mock_instance*.
     pub fn from_code(code: &[u8], deps: Extern<S, A, Q>, gas_limit: u64) -> VmResult<Self> {
+        /*
         let module = compile(code)?;
         Instance::from_module(&module, deps, gas_limit)
+        */
+        let enclave = get_enclave().map_err(EnclaveError::sdk_err)?;
+        let module = Module::<S, Q>::new(
+            code.to_vec(),
+            gas_limit,
+            enclave,
+            setup_context::<S, Q>(gas_limit),
+        );
+        Ok(Instance::from_wasmer(module, deps, gas_limit))
     }
 
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn from_module(
         module: &Module,
         deps: Extern<S, A, Q>,
@@ -139,20 +170,27 @@ where
     }
 
     pub(crate) fn from_wasmer(
+        /*
         mut wasmer_instance: Box<WasmerInstance>,
+        */
+        mut module: Module<S, Q>,
         deps: Extern<S, A, Q>,
-        gas_limit: u64,
+        _gas_limit: u64,
     ) -> Self {
+        /*
         set_gas_limit(wasmer_instance.as_mut(), gas_limit);
         get_gas_state::<S, Q>(wasmer_instance.context_mut()).set_gas_limit(gas_limit);
         let required_features = required_features_from_wasmer_instance(wasmer_instance.as_ref());
         let instance_ptr = NonNull::from(wasmer_instance.as_ref());
         set_wasmer_instance::<S, Q>(wasmer_instance.context_mut(), Some(instance_ptr));
-        move_into_context(wasmer_instance.context_mut(), deps.storage, deps.querier);
+        */
+        move_into_context(module.context_mut(), deps.storage, deps.querier);
         Instance {
-            inner: wasmer_instance,
+            inner: module,
             api: deps.api,
+            /*
             required_features,
+            */
             type_storage: PhantomData::<S> {},
             type_querier: PhantomData::<Q> {},
         }
@@ -176,6 +214,7 @@ where
     /// This provides a rough idea of the peak memory consumption. Note that
     /// Wasm memory always grows in 64 KiB steps (pages) and can never shrink
     /// (https://github.com/WebAssembly/design/issues/1300#issuecomment-573867836).
+    #[cfg(not(feature = "default-enclave"))]
     pub fn get_memory_size(&self) -> u64 {
         (get_memory_info(self.inner.context()).size as u64) * WASM_PAGE_SIZE
     }
@@ -202,6 +241,7 @@ where
 
     /// Requests memory allocation by the instance and returns a pointer
     /// in the Wasm address space to the created Region object.
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn allocate(&mut self, size: usize) -> VmResult<u32> {
         let alloc: Func<u32, u32> = self.func("allocate")?;
         let ptr = alloc.call(to_u32(size)?)?;
@@ -214,6 +254,7 @@ where
     // deallocate frees memory in the instance and that was either previously
     // allocated by us, or a pointer from a return value after we copy it into rust.
     // we need to clean up the wasm-side buffers to avoid memory leaks
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn deallocate(&mut self, ptr: u32) -> VmResult<()> {
         let dealloc: Func<u32, ()> = self.func("deallocate")?;
         dealloc.call(ptr)?;
@@ -221,16 +262,19 @@ where
     }
 
     /// Copies all data described by the Region at the given pointer from Wasm to the caller.
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn read_memory(&self, region_ptr: u32, max_length: usize) -> VmResult<Vec<u8>> {
         read_region(self.inner.context(), region_ptr, max_length)
     }
 
     /// Copies data to the memory region that was created before using allocate.
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn write_memory(&mut self, region_ptr: u32, data: &[u8]) -> VmResult<()> {
         write_region(self.inner.context(), region_ptr, data)?;
         Ok(())
     }
 
+    #[cfg(not(feature = "default-enclave"))]
     pub(crate) fn func<Args, Rets>(&self, name: &str) -> VmResult<Func<Args, Rets, Wasm>>
     where
         Args: WasmTypeList,
@@ -238,6 +282,28 @@ where
     {
         let function = self.inner.exports.get(name)?;
         Ok(function)
+    }
+
+    pub fn call_init(&mut self, env: &[u8], msg: &[u8]) -> VmResult<Vec<u8>> {
+        let init_result = self.inner.init(env, msg)?;
+        // TODO verify signature
+        Ok(init_result.into_output())
+    }
+
+    pub fn call_handle(&mut self, env: &[u8], msg: &[u8]) -> VmResult<Vec<u8>> {
+        let init_result = self.inner.handle(env, msg)?;
+        // TODO verify signature
+        Ok(init_result.into_output())
+    }
+
+    pub fn call_migrate(&mut self, _env: &[u8], _msg: &[u8]) -> VmResult<Vec<u8>> {
+        Ok(Vec::new())
+    }
+
+    pub fn call_query(&mut self, msg: &[u8]) -> VmResult<Vec<u8>> {
+        let init_result = self.inner.query(msg)?;
+        // TODO verify signature
+        Ok(init_result.into_output())
     }
 }
 
@@ -299,6 +365,7 @@ mod test {
         assert!(instance.required_features.contains("water"));
     }
 
+    /*
     #[test]
     fn func_works() {
         let instance = mock_instance(&CONTRACT, &[]);
@@ -311,6 +378,7 @@ mod test {
         let _ptr2 = allocate.call(1).expect("error calling allocate func");
         let _ptr3 = allocate.call(33).expect("error calling allocate func");
     }
+    */
 
     #[test]
     fn func_errors_for_non_existent_function() {

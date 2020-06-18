@@ -6,6 +6,7 @@ use std::convert::TryInto;
 use std::ffi::c_void;
 #[cfg(not(feature = "iterator"))]
 use std::marker::PhantomData;
+/*
 use std::ptr::NonNull;
 
 use wasmer_runtime_core::{
@@ -13,6 +14,9 @@ use wasmer_runtime_core::{
     vm::Ctx,
     Instance as WasmerInstance,
 };
+*/
+
+use enclave_ffi_types::Ctx;
 
 use crate::errors::{VmError, VmResult};
 #[cfg(feature = "iterator")]
@@ -21,6 +25,7 @@ use crate::traits::{Querier, Storage};
 
 /** context data **/
 
+#[cfg(not(feature = "default-enclave"))]
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct GasState {
     /// Gas limit for the computation.
@@ -30,6 +35,7 @@ pub struct GasState {
     externally_used_gas: u64,
 }
 
+#[cfg(not(feature = "default-enclave"))]
 impl GasState {
     fn with_limit(gas_limit: u64) -> Self {
         Self {
@@ -69,12 +75,16 @@ impl GasState {
 }
 
 struct ContextData<'a, S: Storage, Q: Querier> {
+    /*
     gas_state: GasState,
+    */
     storage: Option<S>,
     storage_readonly: bool,
     querier: Option<Q>,
+    /*
     /// A non-owning link to the wasmer instance
     wasmer_instance: Option<NonNull<WasmerInstance>>,
+    */
     #[cfg(feature = "iterator")]
     iterators: HashMap<u32, Box<dyn StorageIterator + 'a>>,
     #[cfg(not(feature = "iterator"))]
@@ -88,13 +98,17 @@ pub fn setup_context<S: Storage, Q: Querier>(gas_limit: u64) -> (*mut c_void, fn
     )
 }
 
-fn create_unmanaged_context_data<S: Storage, Q: Querier>(gas_limit: u64) -> *mut c_void {
+fn create_unmanaged_context_data<S: Storage, Q: Querier>(_gas_limit: u64) -> *mut c_void {
     let data = ContextData::<S, Q> {
-        gas_state: GasState::with_limit(gas_limit),
+        /*
+        gas_state: GasState::with_limit(_gas_limit),
+        */
         storage: None,
         storage_readonly: true,
         querier: None,
+        /*
         wasmer_instance: None,
+        */
         #[cfg(feature = "iterator")]
         iterators: HashMap::new(),
         #[cfg(not(feature = "iterator"))]
@@ -136,21 +150,27 @@ fn destroy_unmanaged_context_data<S: Storage, Q: Querier>(ptr: *mut c_void) {
 fn get_context_data_mut<'a, 'b, S: Storage, Q: Querier>(
     ctx: &'a mut Ctx,
 ) -> &'b mut ContextData<'b, S, Q> {
+    use crate::wasmi::FullContext;
+
     unsafe {
-        let ptr = ctx.data as *mut ContextData<S, Q>;
+        let ptr = (*(ctx.data as *mut FullContext)).context_data as *mut ContextData<S, Q>;
         ptr.as_mut()
             .expect("The pointer ctx.data was null in get_context_data_mut; this is a bug.")
     }
 }
 
+#[cfg(not(feature = "default-enclave"))]
 fn get_context_data<'a, 'b, S: Storage, Q: Querier>(ctx: &'a Ctx) -> &'b ContextData<'b, S, Q> {
+    use crate::wasmi::FullContext;
+
     unsafe {
-        let ptr = ctx.data as *mut ContextData<S, Q>;
+        let ptr = (*(ctx.data as *mut FullContext)).context_data as *mut ContextData<S, Q>;
         ptr.as_ref()
             .expect("The pointer ctx.data was null in get_context_data; this is a bug.")
     }
 }
 
+#[cfg(not(feature = "default-enclave"))]
 /// Creates a back reference from a contact to its partent instance
 pub fn set_wasmer_instance<S: Storage, Q: Querier>(
     ctx: &mut Ctx,
@@ -192,6 +212,7 @@ pub(crate) fn move_into_context<S: Storage, Q: Querier>(target: &mut Ctx, storag
     b.querier = Some(querier);
 }
 
+#[cfg(not(feature = "default-enclave"))]
 pub fn get_gas_state<'a, 'b, S: Storage, Q: Querier + 'b>(ctx: &'a mut Ctx) -> &'b mut GasState {
     &mut get_context_data_mut::<S, Q>(ctx).gas_state
 }
@@ -230,6 +251,7 @@ pub fn try_consume_gas<S: Storage, Q: Querier>(_ctx: &mut Ctx, _used_gas: u64) -
 }
 
 /// Returns true iff the storage is set to readonly mode
+#[cfg(not(feature = "default-enclave"))]
 pub fn is_storage_readonly<S: Storage, Q: Querier>(ctx: &Ctx) -> bool {
     let context_data = get_context_data::<S, Q>(ctx);
     context_data.storage_readonly
@@ -263,6 +285,7 @@ pub fn add_iterator<'a, S: Storage, Q: Querier>(
     new_id
 }
 
+#[cfg(not(feature = "default-enclave"))]
 pub(crate) fn with_func_from_context<S, Q, Args, Rets, Callback, CallbackData>(
     ctx: &mut Ctx,
     name: &str,

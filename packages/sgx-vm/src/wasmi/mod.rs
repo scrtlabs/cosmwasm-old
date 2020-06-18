@@ -1,10 +1,9 @@
 mod exports;
 mod imports;
 mod results;
-mod wasm_hash;
-mod wrapper;
 mod utils;
+mod wrapper;
 
-pub use wasm_hash::WasmHash;
-pub use wrapper::*;
+pub(crate) use exports::FullContext;
 pub use imports::*;
+pub use wrapper::*;
