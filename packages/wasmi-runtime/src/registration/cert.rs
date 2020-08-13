@@ -3,12 +3,10 @@
 use bit_vec::BitVec;
 use chrono::Utc as TzUtc;
 use chrono::{Duration, TimeZone};
-#[cfg(feature = "SGX_MODE_HW")]
-use itertools::Itertools;
+
 #[cfg(feature = "SGX_MODE_HW")]
 use log::*;
 use num_bigint::BigUint;
-
 use sgx_tcrypto::SgxEccHandle;
 use sgx_types::{
     sgx_ec256_private_t, sgx_ec256_public_t, sgx_platform_info_t, sgx_status_t,
@@ -20,15 +18,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::untrusted::time::SystemTimeEx;
 use yasna::models::ObjectIdentifier;
 
-use crate::consts::CERTEXPIRYDAYS;
 #[cfg(feature = "SGX_MODE_HW")]
-use crate::consts::{SigningMethod, SIGNING_METHOD};
+use super::attestation::get_mr_enclave;
+
+use crate::consts::CERTEXPIRYDAYS;
+
+#[cfg(feature = "SGX_MODE_HW")]
+use crate::consts::{SigningMethod, MRSIGNER, SIGNING_METHOD};
 
 #[cfg(feature = "SGX_MODE_HW")]
 use super::report::{AttestationReport, SgxQuoteStatus};
+use enclave_ffi_types::NodeAuthResult;
 
 extern "C" {
-    #[allow(dead_code)]
     pub fn ocall_get_update_info(
         ret_val: *mut sgx_status_t,
         platformBlob: *const sgx_platform_info_t,
@@ -38,9 +40,6 @@ extern "C" {
 }
 
 pub const IAS_REPORT_CA: &[u8] = include_bytes!("../../Intel_SGX_Attestation_RootCA.pem");
-
-// todo: replace this with MRSIGNER/MRENCLAVE
-pub const ENCLAVE_SIGNATURE: &[u8] = include_bytes!("../../Intel_SGX_Attestation_RootCA.pem");
 
 const ISSUER: &str = "SecretTEE";
 const SUBJECT: &str = "Secret Network Node Certificate";
@@ -274,11 +273,10 @@ pub fn get_ias_auth_config() -> (Vec<u8>, rustls::RootCertStore) {
 }
 
 #[cfg(not(feature = "SGX_MODE_HW"))]
-pub fn verify_ra_cert(cert_der: &[u8]) -> SgxResult<Vec<u8>> {
-    let payload =
-        get_netscape_comment(cert_der).map_err(|_err| sgx_status_t::SGX_ERROR_UNEXPECTED)?;
+pub fn verify_ra_cert(cert_der: &[u8]) -> Result<Vec<u8>, NodeAuthResult> {
+    let payload = get_netscape_comment(cert_der).map_err(|_err| NodeAuthResult::InvalidCert)?;
 
-    let pk = base64::decode(&payload).unwrap();
+    let pk = base64::decode(&payload).map_err(|_err| NodeAuthResult::InvalidCert)?;
 
     Ok(pk)
 }
@@ -287,93 +285,124 @@ pub fn verify_ra_cert(cert_der: &[u8]) -> SgxResult<Vec<u8>> {
 ///
 /// Logic:
 /// 1. Extract public key
-/// 2. Extract netscape comment == attestation report
-/// 3.
+/// 2. Extract netscape comment - where the attestation report is located
+/// 3. Parse the report itself (verify it is signed by intel)
+/// 4. Extract public key from report body
+/// 5. Verify enclave signature (mr enclave/signer)
 ///
 #[cfg(feature = "SGX_MODE_HW")]
-pub fn verify_ra_cert(cert_der: &[u8]) -> SgxResult<Vec<u8>> {
+pub fn verify_ra_cert(cert_der: &[u8]) -> Result<Vec<u8>, NodeAuthResult> {
     // Before we reach here, Webpki already verifed the cert is properly signed
 
-    let report =
-        AttestationReport::from_cert(cert_der).map_err(|_| sgx_status_t::SGX_ERROR_UNEXPECTED)?;
+    let report = AttestationReport::from_cert(cert_der).map_err(|_| NodeAuthResult::InvalidCert)?;
 
     // 2. Verify quote status (mandatory field)
 
-    match report.sgx_quote_status {
-        SgxQuoteStatus::OK => (),
-        SgxQuoteStatus::SwHardeningNeeded => {
-            warn!("Attesting enclave is vulnerable, and should be patched");
-        }
-        _ => {
-            error!("Invalid attestation quote status - cannot verify remote node");
-            return Err(sgx_status_t::SGX_ERROR_UNEXPECTED);
-        }
-    }
+    verify_quote_status(&report.sgx_quote_status)?;
 
+    // verify certificate
     match SIGNING_METHOD {
         SigningMethod::MRENCLAVE => {
-            // todo: fill this in some time
-            debug!("Validating using MRENCLAVE");
-            if report.sgx_quote_body.isv_enclave_report.mr_enclave != ENCLAVE_SIGNATURE {
-                error!("Remote node signature MRENCLAVE is different from expected");
+            let this_mr_enclave = match get_mr_enclave() {
+                Ok(r) => r,
+                Err(_) => {
+                    error!("This should never happen. If you see this, your node isn't working anymore");
+                    return Err(NodeAuthResult::Panic);
+                }
+            };
+
+            if report.sgx_quote_body.isv_enclave_report.mr_enclave != this_mr_enclave {
+                error!("Got a different mr_enclave than expected. Invalid certificate");
                 debug!(
-                    "sgx quote mr_enclave = {:02x}",
-                    report
-                        .sgx_quote_body
-                        .isv_enclave_report
-                        .mr_enclave
-                        .iter()
-                        .format("")
+                    "received: {:?} \n expected: {:?}",
+                    report.sgx_quote_body.isv_enclave_report.mr_enclave, this_mr_enclave
                 );
-                return Err(sgx_status_t::SGX_ERROR_UNEXPECTED);
+                return Err(NodeAuthResult::MrEnclaveMismatch);
             }
         }
         SigningMethod::MRSIGNER => {
-            // todo: fill this in some time
-            debug!("Validating using MRSIGNER");
-            if report.sgx_quote_body.isv_enclave_report.mr_signer != ENCLAVE_SIGNATURE {
-                error!("Remote node signature MRSIGNER is different from expected");
+            if report.sgx_quote_body.isv_enclave_report.mr_signer != MRSIGNER {
+                error!("Got a different mrsigner than expected. Invalid certificate");
                 debug!(
-                    "sgx quote mr_signer = {:02x}",
-                    report
-                        .sgx_quote_body
-                        .isv_enclave_report
-                        .mr_signer
-                        .iter()
-                        .format("")
+                    "received: {:?} \n expected: {:?}",
+                    report.sgx_quote_body.isv_enclave_report.mr_signer, MRSIGNER
                 );
-                return Err(sgx_status_t::SGX_ERROR_UNEXPECTED);
+                return Err(NodeAuthResult::MrSignerMismatch);
             }
         }
-        _ => debug!("Ignoring signing method validation"),
+        SigningMethod::NONE => {}
     }
 
     let report_public_key = report.sgx_quote_body.isv_enclave_report.report_data[0..32].to_vec();
     Ok(report_public_key)
 }
 
-#[cfg(feature = "test")]
-pub mod tests {
-    use crate::crypto::KeyPair;
-
-    use super::sgx_quote_sign_type_t;
-    use super::verify_ra_cert;
-
-    fn test_validate_certificate_valid_sw_mode() {
-        pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert");
-        let result = verify_ra_cert(cert);
+#[cfg(all(feature = "SGX_MODE_HW", feature = "production"))]
+pub fn verify_quote_status(quote_status: &SgxQuoteStatus) -> Result<(), NodeAuthResult> {
+    match quote_status {
+        SgxQuoteStatus::OK => Ok(()),
+        SgxQuoteStatus::SwHardeningNeeded => {
+            // warn!("Attesting enclave is vulnerable, and should be patched");
+            Ok(())
+        }
+        _ => {
+            error!(
+                "Invalid attestation quote status - cannot verify remote node: {:?}",
+                quote_status
+            );
+            Err(NodeAuthResult::from(quote_status))
+        }
     }
-
-    fn test_validate_certificate_valid_signed() {
-        pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert.der");
-        let result = verify_ra_cert(cert);
-    }
-
-    fn test_validate_certificate_invalid() {
-        pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert_invalid");
-        let result = verify_ra_cert(cert);
-    }
-
-    // we want a weird test because this should never crash
-    fn test_random_bytes_as_certificate() {}
 }
+
+#[cfg(all(feature = "SGX_MODE_HW", not(feature = "production")))]
+pub fn verify_quote_status(quote_status: &SgxQuoteStatus) -> Result<(), NodeAuthResult> {
+    match quote_status {
+        SgxQuoteStatus::OK => Ok(()),
+        SgxQuoteStatus::SwHardeningNeeded => {
+            // warn!("Attesting enclave is vulnerable, and should be patched");
+            Ok(())
+        }
+        SgxQuoteStatus::GroupOutOfDate => {
+            warn!("TCB level of SGX platform service is outdated. You should check for firmware updates");
+            Ok(())
+        }
+        SgxQuoteStatus::ConfigurationAndSwHardeningNeeded => {
+            warn!("Platform is updated but requires further BIOS configuration");
+            Ok(())
+        }
+        _ => {
+            error!(
+                "Invalid attestation quote status - cannot verify remote node: {:?}",
+                quote_status
+            );
+            Err(NodeAuthResult::from(quote_status))
+        }
+    }
+}
+
+// #[cfg(feature = "test")]
+// pub mod tests {
+//     use crate::crypto::KeyPair;
+//
+//     use super::sgx_quote_sign_type_t;
+//     use super::verify_ra_cert;
+//
+//     fn test_validate_certificate_valid_sw_mode() {
+//         pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert");
+//         let result = verify_ra_cert(cert);
+//     }
+//
+//     fn test_validate_certificate_valid_signed() {
+//         pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert.der");
+//         let result = verify_ra_cert(cert);
+//     }
+//
+//     fn test_validate_certificate_invalid() {
+//         pub const cert: &[u8] = include_bytes!("../testdata/attestation_cert_invalid");
+//         let result = verify_ra_cert(cert);
+//     }
+//
+//     // we want a weird test because this should never crash
+//     fn test_random_bytes_as_certificate() {}
+// }

@@ -1,4 +1,4 @@
-// similar trick to get the IDE to use sgx_tstd even when it doesn't know we're targetting SGX
+// similar trick to get the IDE to use sgx_tstd even when it doesn't know we're targeting SGX
 #[cfg(not(target_env = "sgx"))]
 extern crate sgx_tstd as std;
 // This annotation is here to trick the IDE into ignoring the extern crate, and instead pull in sgx_types from our
@@ -14,9 +14,12 @@ use log::LevelFilter;
 
 use crate::logger::*;
 
+mod macros;
+
 pub mod exports;
 pub mod imports;
 pub mod logger;
+mod oom_handler;
 pub mod registration;
 
 mod consts;
@@ -32,17 +35,30 @@ mod results;
 mod storage;
 mod utils;
 
+mod tests;
+
 static LOGGER: SimpleLogger = SimpleLogger;
 
+#[cfg(all(not(feature = "production"), feature = "SGX_MODE_HW"))]
+#[ctor]
+fn init_logger() {
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(LevelFilter::Info))
+        .unwrap();
+}
+
+#[cfg(all(feature = "production", feature = "SGX_MODE_HW"))]
+#[ctor]
+fn init_logger() {
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(LevelFilter::Warn))
+        .unwrap();
+}
+
+#[cfg(not(feature = "SGX_MODE_HW"))]
 #[ctor]
 fn init_logger() {
     log::set_logger(&LOGGER)
         .map(|()| log::set_max_level(LevelFilter::Trace))
         .unwrap();
-}
-
-// todo: figure out how we want to turn this on
-#[cfg(feature = "test")]
-fn run_test() {
-    println!("placeholder")
 }

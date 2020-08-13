@@ -18,46 +18,17 @@ pub struct EnclaveBuffer {
 impl EnclaveBuffer {
     /// # Safety
     /// Very unsafe. Much careful
-    pub unsafe fn unsafe_clone(&self) -> EnclaveBuffer {
+    pub unsafe fn unsafe_clone(&self) -> Self {
         EnclaveBuffer { ptr: self.ptr }
     }
 }
 
-impl Default for EnclaveReturn {
-    fn default() -> EnclaveReturn {
-        EnclaveReturn::Success
+impl Default for EnclaveBuffer {
+    fn default() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+        }
     }
-}
-
-/// This enum is used to return from an ecall/ocall to represent if the operation was a success and if not then what was the error.
-/// The goal is to not reveal anything sensitive
-/// `#[repr(C)]` is a Rust feature which makes the struct be aligned just like C structs.
-/// See [`Repr(C)`][https://doc.rust-lang.org/nomicon/other-reprs.html]
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EnclaveReturn {
-    /// Success, the function returned without any failure.
-    Success,
-    /// KeysError, There's a key missing or failed to derive a key.
-    KeysError,
-    /// Failure in Encryption, couldn't decrypt the variable / failed to encrypt the results.
-    EncryptionError,
-    /// SigningError, for some reason it failed on signing the results.
-    SigningError,
-    /// RecoveringError, Something failed in recovering the public key.
-    RecoveringError,
-    ///PermissionError, Received a permission error from an ocall, (i.e. opening the signing keys file or something like that)
-    PermissionError,
-    /// SgxError, Error that came from the SGX specific stuff (i.e DRAND, Sealing etc.)
-    SgxError,
-    /// StateError, an Error in the State. (i.e. failed applying delta, failed deserializing it etc.)
-    StateError,
-    /// OcallError, an error from an ocall.
-    OcallError,
-    /// OcallDBError, an error from the Database in the untrusted part, couldn't get/save something.
-    OcallDBError,
-    /// Something went really wrong.
-    Other,
 }
 
 /// This struct holds a pointer to memory in userspace, that contains the storage
@@ -69,8 +40,8 @@ pub struct Ctx {
 impl Ctx {
     /// # Safety
     /// Very unsafe. Much careful
-    pub unsafe fn unsafe_clone(&self) -> Ctx {
-        Ctx { data: self.data }
+    pub unsafe fn unsafe_clone(&self) -> Self {
+        Self { data: self.data }
     }
 }
 
@@ -79,111 +50,216 @@ impl Ctx {
 #[repr(C)]
 #[derive(Debug, Display)]
 pub enum EnclaveError {
-    /// This indicated failed ocalls, but ocalls during callbacks from wasm code will not currently
-    /// be represented this way. This is doable by returning a `TrapKind::Host` from these callbacks,
-    /// but that's a TODO at the moment.
-    FailedOcall,
+    /// An ocall failed to execute. This can happen because of three scenarios:
+    /// 1. A VmError was thrown during the execution of the ocall. In this case, `vm_error` will be non-null.
+    /// 2. An error happened that prevented the ocall from running correctly. This can happen because of
+    ///    caught memory-handling issues, or a failed ecall during an ocall. `vm_error` will be null.
+    /// 3. We failed to call the ocall due to an SGX fault. `vm_error` will be null.
+    // TODO should we split these three cases for better diagnostics?
+    #[display(fmt = "failed to execute ocall")]
+    FailedOcall { vm_error: UntrustedVmError },
+    #[display(fmt = "failed to validate transaction")]
+    ValidationFailure,
+    // Problems with the module binary
     /// The WASM code was invalid and could not be loaded.
+    #[display(fmt = "tried to load invalid wasm code")]
     InvalidWasm,
+    #[display(fmt = "failed to initialize wasm memory")]
+    CannotInitializeWasmMemory,
     /// The WASM module contained a start section, which is not allowed.
     WasmModuleWithStart,
     /// The WASM module contained floating point operations, which is not allowed.
+    #[display(fmt = "found floating point operation in module code")]
     WasmModuleWithFP,
-    /// Calling a function in the contract failed.
-    FailedFunctionCall,
     /// Fail to inject gas metering
+    #[display(fmt = "failed to inject gas metering")]
     FailedGasMeteringInjection,
+    #[display(fmt = "internal error during execution")]
+    InternalError,
+    // runtime issues with the module
     /// Ran out of gas
+    #[display(fmt = "execution ran out of gas")]
     OutOfGas,
+    /// Calling a function in the contract failed.
+    #[display(fmt = "calling a function in the contract failed for an unexpected reason")]
+    FailedFunctionCall,
+    // These variants mimic the variants of `wasmi::TrapKind`
+    /// The contract panicked during execution.
+    #[display(fmt = "the contract panicked")]
+    ContractPanicUnreachable,
+    /// The contract tried to access memory out of bounds.
+    #[display(fmt = "the contract tried to access memory out of bounds")]
+    ContractPanicMemoryAccessOutOfBounds,
+    /// The contract tried to access a nonexistent resource.
+    #[display(fmt = "the contract tried to access a nonexistent resource")]
+    ContractPanicTableAccessOutOfBounds,
+    /// The contract tried to access an uninitialized resource.
+    #[display(fmt = "the contract tried to access an uninitialized resource")]
+    ContractPanicElemUninitialized,
+    /// The contract tried to divide by zero.
+    #[display(fmt = "the contract tried to divide by zero")]
+    ContractPanicDivisionByZero,
+    /// The contract tried to perform an invalid conversion to an integer.
+    #[display(fmt = "the contract tried to perform an invalid conversion to an integer")]
+    ContractPanicInvalidConversionToInt,
+    /// The contract has run out of space on the stack.
+    #[display(fmt = "the contract has run out of space on the stack")]
+    ContractPanicStackOverflow,
+    /// The contract tried to call a function but expected an incorrect function signature.
+    #[display(
+        fmt = "the contract tried to call a function but expected an incorrect function signature"
+    )]
+    ContractPanicUnexpectedSignature,
+
+    // Errors in contract ABI:
     /// Failed to seal data
+    #[display(fmt = "failed to seal data")]
     FailedSeal,
+    #[display(fmt = "failed to unseal data")]
     FailedUnseal,
-    /// contract key was invalid
+    #[display(fmt = "failed to authenticate secret contract")]
     FailedContractAuthentication,
+    #[display(fmt = "failed to deserialize data")]
     FailedToDeserialize,
+    #[display(fmt = "failed to serialize data")]
     FailedToSerialize,
+    #[display(fmt = "failed to encrypt data")]
     EncryptionError,
+    #[display(fmt = "failed to decrypt data")]
     DecryptionError,
+    #[display(fmt = "failed to allocate memory")]
+    MemoryAllocationError,
+    #[display(fmt = "failed to read memory")]
+    MemoryReadError,
+    #[display(fmt = "failed to write memory")]
+    MemoryWriteError,
+    #[display(fmt = "contract tried to write to storage during a query")]
+    UnauthorizedWrite,
+
+    // serious issues
+    #[display(fmt = "panic'd due to unexpected behavior")]
+    Panic,
+    #[display(fmt = "enclave ran out of heap memory")]
+    OutOfMemory,
     /// Unexpected Error happened, no more details available
+    #[display(fmt = "unknown error")]
     Unknown,
+}
+
+/// This type represents the possible error conditions that can be encountered in the
+/// enclave while authenticating a new node in the network.
+/// cbindgen:prefix-with-name
+#[repr(C)]
+#[derive(Debug, Display, PartialEq, Eq)]
+pub enum NodeAuthResult {
+    #[display(fmt = "Enclave quote is valid")]
+    Success,
+    #[display(fmt = "Enclave quote status was GROUP_OUT_OF_DATE which is not allowed")]
+    GroupOutOfDate,
+    #[display(fmt = "Enclave quote status was SIGNATURE_INVALID which is not allowed")]
+    SignatureInvalid,
+    #[display(fmt = "Enclave quote status was SIGNATURE_REVOKED which is not allowed")]
+    SignatureRevoked,
+    #[display(fmt = "Enclave quote status was GROUP_REVOKED which is not allowed")]
+    GroupRevoked,
+    #[display(fmt = "Enclave quote status was KEY_REVOKED which is not allowed")]
+    KeyRevoked,
+    #[display(fmt = "Enclave quote status was SIGRL_VERSION_MISMATCH which is not allowed")]
+    SigrlVersionMismatch,
+    #[display(fmt = "Enclave quote status was CONFIGURATION_NEEDED which is not allowed")]
+    ConfigurationNeeded,
+    #[display(
+        fmt = "Enclave quote status was CONFIGURATION_AND_SW_HARDENING_NEEDED which is not allowed"
+    )]
+    SwHardeningAndConfigurationNeeded,
+    #[display(fmt = "Enclave quote status invalid")]
+    BadQuoteStatus,
+    #[display(fmt = "Enclave version mismatch. Registering enclave had different code signature")]
+    MrEnclaveMismatch,
+    #[display(fmt = "Enclave version mismatch. Registering enclave had different signer")]
+    MrSignerMismatch,
+    #[display(fmt = "Enclave received invalid inputs")]
+    InvalidInput,
+    #[display(fmt = "The provided certificate was invalid")]
+    InvalidCert,
+    #[display(fmt = "Writing to file system from the enclave failed")]
+    CantWriteToStorage,
+    #[display(fmt = "The public key in the certificate appears to be malformed")]
+    MalformedPublicKey,
+    #[display(fmt = "Encrypting the seed failed")]
+    SeedEncryptionFailed,
+    #[display(
+        fmt = "Unexpected panic during node authentication. Certificate may be malformed or invalid"
+    )]
     Panic,
 }
 
+/// This type represents the possible error conditions that can be encountered in the
+/// enclave while authenticating a new node in the network.
+/// cbindgen:prefix-with-name
+#[repr(C)]
+#[derive(Debug, Display, PartialEq, Eq)]
+pub enum HealthCheckResult {
+    Success,
+}
+
+impl Default for HealthCheckResult {
+    fn default() -> Self {
+        HealthCheckResult::Success
+    }
+}
+
+/// This type holds a pointer to a VmError that is boxed on the untrusted side
+// `VmError` is the standard error type for the `cosmwasm-sgx-vm` layer.
+// During an ocall, we call into the original implementation of `db_read`, `db_write`, and `db_remove`.
+// These call out all the way to the Go side. They return `VmError` when something goes wrong in this process.
+// These errors need to be propagated back into and out of the enclave, and then bacl into the `cosmwasm-sgx-vm` layer.
+// There is never anything we can do with these errors inside the enclave, so instead of converting `VmError`
+// to a type that the enclave can understand, we just box it bedore returning from the enclave, store the heap pointer
+// in an instance of `UntrustedVmError`, propagate this error all the way back to the point that called
+// into the enclave, and then finally unwrap the `VmError`, which gets propagated up the normal stack.
+//
+// For a more detailed discussion, see:
+// https://github.com/enigmampc/SecretNetwork/pull/307#issuecomment-651157410
 #[repr(C)]
 #[derive(Debug, Display)]
-pub enum CryptoError {
-    /// The `DerivingKeyError` error.
-    ///
-    /// This error means that the ECDH process failed.
-    DerivingKeyError,
-    // {
-    //     self_key: [u8; 64],
-    //     other_key: [u8; 64],
-    // },
-    /// The `MissingKeyError` error.
-    ///
-    /// This error means that a key was missing.
-    MissingKeyError,
-    //  {
-    //     key_type: &'static str,
-    // },
-    /// The `DecryptionError` error.
-    ///
-    /// This error means that the symmetric decryption has failed for some reason.
-    DecryptionError,
-    /// The `ImproperEncryption` error.
-    ///
-    /// This error means that the ciphertext provided was imporper.
-    /// e.g. MAC wasn't valid, missing IV etc.
-    ImproperEncryption,
-    /// The `EncryptionError` error.
-    ///
-    /// This error means that the symmetric encryption has failed for some reason.
-    EncryptionError,
-    /// The `SigningError` error.
-    ///
-    /// This error means that the signing process has failed for some reason.
-    SigningError,
-    // {
-    //     hashed_msg: [u8; 32],
-    // },
-    /// The `ParsingError` error.
-    ///
-    /// This error means that the signature couldn't be parsed correctly.
-    ParsingError,
-    //  {
-    //     sig: [u8; 65],
-    // },
-    /// The `RecoveryError` error.
-    ///
-    /// This error means that the public key can't be recovered from that message & signature.
-    RecoveryError,
-    //  {
-    //     sig: [u8; 65],
-    // },
-    /// The `KeyError` error.
-    ///
-    /// This error means that a key wasn't vaild.
-    /// e.g. PrivateKey, PubliKey, SharedSecret.
-    // #[cfg(feature = "asymmetric")]
-    KeyError,
-    //  {
-    //     key_type: &'static str,
-    //     err: Option<secp256k1::Error>,
-    // },
-    // #[cfg(not(feature = "asymmetric"))]
-    // KeyError { key_type: &'static str, err: Option<()> },
-    // /// The `RandomError` error.
-    // ///
-    // /// This error means that the random function had failed generating randomness.
-    // #[cfg(feature = "std")]
-    // RandomError {
-    //     err: rand::Error,
-    // },
-    // #[cfg(feature = "sgx")]
-    RandomError, // {
-                 //     err: sgx_types::sgx_status_t,
-                 // }
+#[display(fmt = "VmError")]
+pub struct UntrustedVmError {
+    pub ptr: *mut c_void,
+}
+
+impl UntrustedVmError {
+    pub fn new(ptr: *mut c_void) -> Self {
+        Self { ptr }
+    }
+}
+
+impl Default for UntrustedVmError {
+    fn default() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+        }
+    }
+}
+
+// These implementations are safe because we know that it will only ever be a Box<VmError>,
+// which also has these traits.
+unsafe impl Send for UntrustedVmError {}
+unsafe impl Sync for UntrustedVmError {}
+
+/// This type represent return statuses from ocalls.
+///
+/// cbindgen:prefix-with-name
+#[repr(C)]
+#[derive(Debug, Display)]
+pub enum OcallReturn {
+    /// Ocall returned successfully.
+    Success,
+    /// Ocall failed for some reason.
+    /// error parameters may be passed as out parameters.
+    Failure,
+    /// A panic happened during the ocall.
+    Panic,
 }
 
 /// This struct is returned from ecall_init.
@@ -193,12 +269,11 @@ pub enum InitResult {
     Success {
         /// A pointer to the output of the calculation
         output: UserSpaceBuffer,
-        /// The gas used by the execution.
-        used_gas: u64,
         /// A signature by the enclave on all of the results.
         signature: [u8; 64],
     },
     Failure {
+        /// The error that happened in the enclave
         err: EnclaveError,
     },
 }
@@ -210,12 +285,11 @@ pub enum HandleResult {
     Success {
         /// A pointer to the output of the calculation
         output: UserSpaceBuffer,
-        /// The gas used by the execution.
-        used_gas: u64,
         /// A signature by the enclave on all of the results.
         signature: [u8; 64],
     },
     Failure {
+        /// The error that happened in the enclave
         err: EnclaveError,
     },
 }
@@ -227,12 +301,11 @@ pub enum QueryResult {
     Success {
         /// A pointer to the output of the calculation
         output: UserSpaceBuffer,
-        /// The gas used by the execution.
-        used_gas: u64,
         /// A signature by the enclave on all of the results.
         signature: [u8; 64],
     },
     Failure {
+        /// The error that happened in the enclave
         err: EnclaveError,
     },
 }

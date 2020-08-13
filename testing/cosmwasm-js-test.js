@@ -6,27 +6,33 @@ const cosmwasmjs = require(path.resolve(
 ));
 const assert = require("assert").strict;
 
+process.on("unhandledRejection", (error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+
 (async () => {
-  const client = new cosmwasmjs.CosmWasmClient("http://localhost:1337");
+  const seed = cosmwasmjs.EnigmaUtils.GenerateNewSeed();
+  const client = new cosmwasmjs.CosmWasmClient("http://localhost:1337", seed);
   const contract = (await client.getContracts(1))[0].address;
 
   const resQuery = await client.queryContractSmart(contract, {
-    balance: { address: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4" },
+    balance: { address: "secret1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rjep44t" },
   });
   const initBalance = +resQuery.balance;
-  console.log(`js: initBalance is ${initBalance}`);
 
   const pen = await cosmwasmjs.Secp256k1Pen.fromMnemonic(
     "cost member exercise evoke isolate gift cattle move bundle assume spell face balance lesson resemble orange bench surge now unhappy potato dress number acid"
   );
   const address = cosmwasmjs.pubkeyToAddress(
     cosmwasmjs.encodeSecp256k1Pubkey(pen.pubkey),
-    "enigma"
+    "secret"
   );
   const signingClient = new cosmwasmjs.SigningCosmWasmClient(
     "http://localhost:1337",
     address,
     (signBytes) => pen.sign(signBytes),
+    seed,
     {
       upload: {
         amount: [{ amount: "25000", denom: "uscrt" }],
@@ -50,18 +56,74 @@ const assert = require("assert").strict;
   const execTx = await signingClient.execute(contract, {
     transfer: {
       amount: "10",
-      recipient: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4",
+      recipient: "secret1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rjep44t",
     },
   });
 
-  const res2Query = await client.queryContractSmart(contract, {
-    balance: { address: "enigma1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rp5vqd4" },
+  const tx = await client.restClient.txById(execTx.transactionHash);
+  assert.deepEqual(execTx.logs, tx.logs);
+  assert.deepEqual(execTx.data, tx.data);
+  assert.deepEqual(tx.data, Uint8Array.from([]));
+  assert.deepEqual(tx.logs[0].events[1].attributes, [
+    {
+      key: "contract_address",
+      value: contract,
+    },
+    {
+      key: "action",
+      value: "transfer",
+    },
+    {
+      key: "sender",
+      value: "secret18rxhudxdx6wen48rtnrf4jv5frf47qa9ws2ju3",
+    },
+    {
+      key: "recipient",
+      value: "secret1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rjep44t",
+    },
+  ]);
+
+  const qRes = await client.queryContractSmart(contract, {
+    balance: { address: "secret1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rjep44t" },
   });
 
-  // const tx = await client.restClient.txById(execTx.transactionHash);
+  assert.equal(+qRes.balance, initBalance + 10);
 
-  console.log(
-    `js: finalBalance is ${res2Query.balance} (should be ${initBalance + 10})`
-  );
-  assert.equal(+res2Query.balance, initBalance + 10);
+  const qRes2 = await client.queryContractSmart(contract, {
+    balance: { address: "secret18rxhudxdx6wen48rtnrf4jv5frf47qa9ws2ju3" },
+  });
+
+  try {
+    await signingClient.execute(contract, {
+      transfer: {
+        amount: "1000",
+        recipient: "secret1f395p0gg67mmfd5zcqvpnp9cxnu0hg6rjep44t",
+      },
+    });
+  } catch (err) {
+    assert(
+      err.message.includes(
+        `Insufficient funds: balance=${qRes2.balance}, required=1000"`
+      )
+    );
+
+    const txId = /Error when posting tx (.+?)\./.exec(err.message)[1];
+
+    const tx = await client.restClient.txById(txId);
+    assert(
+      tx.raw_log.includes(
+        `Insufficient funds: balance=${qRes2.balance}, required=1000"`
+      )
+    );
+  }
+
+  try {
+    await client.queryContractSmart(contract, {
+      balance: { address: "blabla" },
+    });
+  } catch (err) {
+    assert(err.message.includes("canonicalize_address returned error"));
+  }
+
+  console.log("ok 👌");
 })();

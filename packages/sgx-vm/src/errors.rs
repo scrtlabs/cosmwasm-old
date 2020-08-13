@@ -90,6 +90,7 @@ pub enum VmError {
     #[snafu(display("Must not call a writing storage function in this context."))]
     WriteAccessDenied { backtrace: snafu::Backtrace },
 
+    #[snafu(display("Enclave: {}", source))]
     EnclaveErr {
         #[snafu(backtrace)]
         source: EnclaveError,
@@ -172,6 +173,7 @@ impl VmError {
     }
 }
 
+/*
 impl From<wasmer_runtime_core::cache::Error> for VmError {
     fn from(original: wasmer_runtime_core::cache::Error) -> Self {
         VmError::cache_err(format!("Wasmer cache error: {:?}", original))
@@ -214,6 +216,7 @@ impl From<wasmer_runtime_core::error::RuntimeError> for VmError {
         }
     }
 }
+*/
 
 pub type VmResult<T> = core::result::Result<T, VmError>;
 
@@ -312,12 +315,12 @@ mod enclave {
     #[derive(Debug, Snafu)]
     #[non_exhaustive]
     pub enum EnclaveError {
-        #[snafu(display("Got an error from the enclave: {:?}", error))]
+        #[snafu(display("{}", error))]
         EnclaveErr {
             error: enclave_ffi_types::EnclaveError,
             backtrace: Backtrace,
         },
-        #[snafu(display("failed to call enclave function: {:?}", status))]
+        #[snafu(display("SGX error: {:?}", status))]
         SdkErr {
             status: sgx_types::sgx_status_t,
             backtrace: Backtrace,
@@ -337,6 +340,19 @@ mod enclave {
     impl From<EnclaveError> for VmError {
         fn from(error: EnclaveError) -> Self {
             VmError::EnclaveErr { source: error }
+        }
+    }
+
+    impl From<enclave_ffi_types::EnclaveError> for VmError {
+        fn from(error: enclave_ffi_types::EnclaveError) -> Self {
+            match error {
+                enclave_ffi_types::EnclaveError::OutOfGas => VmError::GasDepletion,
+                enclave_ffi_types::EnclaveError::FailedOcall { vm_error }
+                    if !vm_error.ptr.is_null() =>
+                // This error is boxed during ocalls.
+                unsafe { *Box::<VmError>::from_raw(vm_error.ptr as *mut _) }
+                other => EnclaveError::enclave_err(other).into(),
+            }
         }
     }
 }

@@ -4,9 +4,9 @@ pub mod singlepass;
 */
 pub mod enclave;
 
+/*
 pub use wasmer_runtime_core::backend::Compiler;
 
-/*
 pub fn compiler_for_backend(backend: &str) -> Option<Box<dyn Compiler>> {
     match backend {
         #[cfg(any(feature = "cranelift", feature = "default-cranelift"))]
@@ -27,4 +27,4 @@ pub use cranelift::{backend, compile, get_gas_left, set_gas_limit};
 pub use singlepass::{backend, compile, get_gas_left, set_gas_limit};
 
 #[cfg(feature = "default-enclave")]
-pub use enclave::get_gas_left;
+pub use enclave::{get_gas_left, get_gas_used};

@@ -14,12 +14,11 @@
 /// would expect it to be. 256/512 bit for Aes128/256 respectively.
 ///
 /// The result of encrypted data will be the size of the data + 16 bytes, same as in GCM mode
-///
 use crate::crypto::keys::{AESKey, SymmetricKey};
 use crate::crypto::traits::SIVEncryptable;
+use crate::crypto::CryptoError;
 use aes_siv::aead::generic_array::GenericArray;
 use aes_siv::siv::Aes128Siv;
-use enclave_ffi_types::CryptoError;
 use log::*;
 
 impl SIVEncryptable for AESKey {
@@ -37,18 +36,13 @@ fn aes_siv_encrypt(
     ad: Option<&[&[u8]]>,
     key: &SymmetricKey,
 ) -> Result<Vec<u8>, CryptoError> {
-    let mut cipher = Aes128Siv::new(GenericArray::clone_from_slice(key));
+    let ad = ad.unwrap_or(&[&[]]);
 
-    match ad {
-        Some(r) => cipher.encrypt(r, plaintext).map_err(|e| {
-            error!("aes_siv_encrypt error: {:?}", e);
-            CryptoError::EncryptionError
-        }),
-        None => cipher.encrypt(&vec![[]], plaintext).map_err(|e| {
-            error!("aes_siv_encrypt error: {:?}", e);
-            CryptoError::EncryptionError
-        }),
-    }
+    let mut cipher = Aes128Siv::new(GenericArray::clone_from_slice(key));
+    cipher.encrypt(ad, plaintext).map_err(|e| {
+        error!("aes_siv_encrypt error: {:?}", e);
+        CryptoError::EncryptionError
+    })
 }
 
 fn aes_siv_decrypt(
@@ -56,27 +50,14 @@ fn aes_siv_decrypt(
     ad: Option<&[&[u8]]>,
     key: &SymmetricKey,
 ) -> Result<Vec<u8>, CryptoError> {
-    let mut cipher = Aes128Siv::new(GenericArray::clone_from_slice(key));
+    let ad = ad.unwrap_or(&[&[]]);
 
-    match ad {
-        Some(r) => cipher.decrypt(r, ciphertext).map_err(|e| {
-            error!("aes_siv_decrypt error: {:?}", e);
-            CryptoError::DecryptionError
-        }),
-        None => cipher.decrypt(&vec![[]], ciphertext).map_err(|e| {
-            error!("aes_siv_decrypt error: {:?}", e);
-            CryptoError::DecryptionError
-        }),
-    }
+    let mut cipher = Aes128Siv::new(GenericArray::clone_from_slice(key));
+    cipher.decrypt(ad, ciphertext).map_err(|e| {
+        error!("aes_siv_decrypt error: {:?}", e);
+        CryptoError::DecryptionError
+    })
 }
-// }
-// let plaintext = match  {
-//     Ok(res) => res,
-//     Err(e) => {
-//
-//     }
-// };
-// Ok(plaintext)
 
 #[cfg(feature = "test")]
 pub mod tests {
@@ -94,9 +75,9 @@ pub mod tests {
         let plaintext = b"7468697320697320736f6d6520706c61696e7465787420746f20656e6372797074207573696e67205349562d414553";
         let ciphertext = b"7bdb6e3b432667eb06f4d14bff2fbd0fcb900f2fddbe404326601965c889bf17dba77ceb094fa663b7a3f748ba8af829ea64ad544a272e9c485b62a3fd5c0d";
 
-        let result = aes_siv_encrypt(plaintext, &aad, &key).unwrap();
+        let result = aes_siv_encrypt(plaintext, Some(&aad), &key).unwrap();
 
-        assert_eq!(result.as_slice(), &ciphertext)
+        assert_eq!(result.as_slice(), &ciphertext[..])
     }
 
     // todo: fix test vectors to actually work
@@ -110,9 +91,9 @@ pub mod tests {
         let plaintext = b"7468697320697320736f6d6520706c61696e7465787420746f20656e6372797074207573696e67205349562d414553";
         let ciphertext = b"7bdb6e3b432667eb06f4d14bff2fbd0fcb900f2fddbe404326601965c889bf17dba77ceb094fa663b7a3f748ba8af829ea64ad544a272e9c485b62a3fd5c0d";
 
-        let result = aes_siv_decrypt(ciphertext, &aad, &key).unwrap();
+        let result = aes_siv_decrypt(ciphertext, Some(&aad), &key).unwrap();
 
-        assert_eq!(result.as_slice(), &plaintext)
+        assert_eq!(result.as_slice(), &plaintext[..])
     }
 
     // todo: fix test vectors to actually work
@@ -122,8 +103,8 @@ pub mod tests {
         let plaintext = b"7468697320697320736f6d6520706c61696e7465787420746f20656e6372797074207573696e67205349562d414553";
         let ciphertext = b"7bdb6e3b432667eb06f4d14bff2fbd0fcb900f2fddbe404326601965c889bf17dba77ceb094fa663b7a3f748ba8af829ea64ad544a272e9c485b62a3fd5c0d";
 
-        let result = aes_siv_encrypt(plaintext, &aad, &key).unwrap();
+        let result = aes_siv_encrypt(plaintext, Some(&aad), &key).unwrap();
 
-        assert_eq!(result.as_slice(), &ciphertext)
+        assert_eq!(result.as_slice(), &ciphertext[..])
     }
 }

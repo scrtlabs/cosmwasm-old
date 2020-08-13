@@ -17,11 +17,11 @@ maintenance = { status = "actively-developed" }
 [features]
 default = ["default-enclave", "staking"]
 # multiple backends may be activated here (available through eg. backends::cranelift::*)
-cranelift = ["wasmer-clif-backend"]
-singlepass = ["wasmer-singlepass-backend"]
+cranelift = [] # ["wasmer-clif-backend"]
+singlepass = [] # ["wasmer-singlepass-backend"]
 # default selects which *one* is re-exported in backends/mod.rs (available through eg backends::*)
-default-cranelift = ["wasmer-clif-backend"]
-default-singlepass = ["wasmer-singlepass-backend"]
+default-cranelift = [] # ["wasmer-clif-backend"]
+default-singlepass = [] # ["wasmer-singlepass-backend"]
 default-enclave = []
 # enable this for better error reporting
 backtraces = ["snafu/backtraces"]
@@ -32,26 +32,31 @@ backtraces = ["snafu/backtraces"]
 # we keep this optional, to allow possible future integration (or different Cosmos Backends)
 iterator = ["cosmwasm-std/iterator"]
 staking = ["cosmwasm-std/staking"]
+enclave-tests = []
 
 [dependencies]
 # Uses the path when built locally; uses the given version from crates.io when published
 cosmwasm-std = { path = "../std", version = "0.9.0-alpha1" }
 serde_json = "1.0"
-wasmer-runtime-core = "0.17"
-wasmer-middleware-common = "0.17"
-wasmer-clif-backend = { version = "0.17", optional = true }
-wasmer-singlepass-backend = { version = "0.17", optional = true }
+# wasmer-runtime-core = "0.17"
+# wasmer-middleware-common = "0.17"
+# wasmer-clif-backend = { version = "0.17", optional = true }
+# wasmer-singlepass-backend = { version = "0.17", optional = true }
 schemars = "0.7"
-serde = { version = "1.0.103", default-features = false, features = ["derive", "alloc"] }
+serde = { version = "1.0.103", default-features = false, features = [
+    "derive",
+    "alloc"
+] }
 snafu = { version = "0.6.3" }
 sha2 = "0.8.0"
 hex = "0.4"
 memmap = "0.7"
 parity-wasm = "0.41"
-
 # requirements specific to Secret Network
 lazy_static = "1.4"
-enclave-ffi-types = { path = "../enclave-ffi-types", features=["build_headers"] }
+enclave-ffi-types = { path = "../enclave-ffi-types", features = [
+    "build_headers"
+] }
 sgx_types = { git = "https://github.com/apache/teaclave-sgx-sdk.git", rev = "v1.1.2" }
 sgx_urts = { git = "https://github.com/apache/teaclave-sgx-sdk.git", rev = "v1.1.2" }
 log = "0.4.8"

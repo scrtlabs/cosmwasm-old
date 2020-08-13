@@ -10,9 +10,11 @@ use super::traits::WasmiApi;
 pub enum HostFunctions {
     ReadDbIndex = 0,
     WriteDbIndex = 1,
-    CanonicalizeAddressIndex = 2,
-    HumanizeAddressIndex = 3,
-    GasIndex = 4,
+    RemoveDbIndex = 2,
+    CanonicalizeAddressIndex = 3,
+    HumanizeAddressIndex = 4,
+    GasIndex = 5,
+    QueryChainIndex = 6,
     Unknown,
 }
 
@@ -21,6 +23,7 @@ impl From<usize> for HostFunctions {
         match v {
             x if x == HostFunctions::ReadDbIndex as usize => HostFunctions::ReadDbIndex,
             x if x == HostFunctions::WriteDbIndex as usize => HostFunctions::WriteDbIndex,
+            x if x == HostFunctions::RemoveDbIndex as usize => HostFunctions::RemoveDbIndex,
             x if x == HostFunctions::CanonicalizeAddressIndex as usize => {
                 HostFunctions::CanonicalizeAddressIndex
             }
@@ -28,6 +31,7 @@ impl From<usize> for HostFunctions {
                 HostFunctions::HumanizeAddressIndex
             }
             x if x == HostFunctions::GasIndex as usize => HostFunctions::GasIndex,
+            x if x == HostFunctions::QueryChainIndex as usize => HostFunctions::QueryChainIndex,
             _ => HostFunctions::Unknown,
         }
     }
@@ -55,10 +59,17 @@ impl Externals for ContractInstance {
                     );
                     err
                 })?;
-                // Get pointer to the region of the value buffer
-                let value: i32 = args.nth_checked(1)?;
-
-                self.read_db_index(key, value)
+                self.read_db_index(key)
+            }
+            HostFunctions::RemoveDbIndex => {
+                let key: i32 = args.nth_checked(0).map_err(|err| {
+                    error!(
+                        "remove_db() error reading arguments, stopping wasm: {:?}",
+                        err
+                    );
+                    err
+                })?;
+                self.remove_db_index(key)
             }
             HostFunctions::WriteDbIndex => {
                 let key: i32 = args.nth_checked(0).map_err(|err| {
@@ -73,7 +84,6 @@ impl Externals for ContractInstance {
 
                 self.write_db_index(key, value)
             }
-
             HostFunctions::CanonicalizeAddressIndex => {
                 let human: i32 = args.nth_checked(0).map_err(|err| {
                     error!(
@@ -85,7 +95,7 @@ impl Externals for ContractInstance {
 
                 let canonical: i32 = args.nth_checked(1)?;
 
-                self.canonicalize_address_index(canonical, human)
+                self.canonicalize_address_index(human, canonical)
             }
             // fn humanize_address(canonical: *const c_void, human: *mut c_void) -> i32;
             HostFunctions::HumanizeAddressIndex => {
@@ -107,6 +117,17 @@ impl Externals for ContractInstance {
 
                 self.humanize_address_index(canonical, human)
             }
+            HostFunctions::QueryChainIndex => {
+                let query: i32 = args.nth_checked(0).map_err(|err| {
+                    error!(
+                        "query_chain() error reading argument, stopping wasm: {:?}",
+                        err
+                    );
+                    err
+                })?;
+
+                self.query_chain_index(query)
+            }
             HostFunctions::GasIndex => {
                 let gas_amount: i32 = args.nth_checked(0).map_err(|err| {
                     error!("gas() error reading arguments, stopping wasm: {:?}", err);
@@ -116,7 +137,7 @@ impl Externals for ContractInstance {
             }
             HostFunctions::Unknown => {
                 error!("unknown function index");
-                Err(WasmEngineError::DbError.into())
+                Err(WasmEngineError::NonExistentImportFunction.into())
             }
         }
     }
