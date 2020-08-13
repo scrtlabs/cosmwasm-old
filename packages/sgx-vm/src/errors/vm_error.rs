@@ -102,6 +102,7 @@ pub enum VmError {
     },
 }
 
+#[allow(unused)]
 impl VmError {
     pub(crate) fn cache_err<S: Into<String>>(msg: S) -> Self {
         CacheErr { msg: msg.into() }.build()

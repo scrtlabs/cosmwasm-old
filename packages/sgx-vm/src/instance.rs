@@ -17,10 +17,10 @@ use wasmer_runtime_core::{
 };
 */
 
-use crate::backends::{get_gas_left, get_gas_used};
+use crate::backends::get_gas_used;
 use crate::context::{
-    get_gas_state, get_gas_state_mut, move_into_context, move_out_of_context, set_storage_readonly,
-    setup_context, with_querier_from_context, with_storage_from_context,
+    move_into_context, move_out_of_context, set_storage_readonly, setup_context,
+    with_querier_from_context, with_storage_from_context,
 };
 /*
 use crate::conversion::to_u32;
@@ -236,6 +236,7 @@ where
     /// Creates and returns a gas report.
     /// This is a snapshot and multiple reports can be created during the lifetime of
     /// an instance.
+    #[cfg(not(feature = "default-enclave"))]
     pub fn create_gas_report(&self) -> GasReport {
         let state = get_gas_state::<S, Q>(self.inner.context()).clone();
         let gas_left = get_gas_left(self.inner.context());
@@ -244,6 +245,23 @@ where
             remaining: gas_left,
             used_externally: state.externally_used_gas,
             used_internally: state.get_gas_used_in_wasmer(gas_left),
+        }
+    }
+
+    /// Creates and returns a gas report.
+    /// This is a snapshot and multiple reports can be created during the lifetime of
+    /// an instance.
+    #[cfg(feature = "default-enclave")]
+    pub fn create_gas_report(&self) -> GasReport {
+        let limit = self.inner.gas_limit();
+        let remaining = self.inner.gas_left();
+        let used_internally = self.inner.gas_used();
+        let used_externally = limit - remaining - used_internally;
+        GasReport {
+            limit,
+            remaining,
+            used_externally,
+            used_internally,
         }
     }
 

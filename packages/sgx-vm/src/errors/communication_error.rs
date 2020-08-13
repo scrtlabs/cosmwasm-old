@@ -51,6 +51,7 @@ pub enum CommunicationError {
     ZeroAddress { backtrace: snafu::Backtrace },
 }
 
+#[allow(unused)]
 impl CommunicationError {
     pub(crate) fn deref_err<S: Into<String>>(offset: u32, msg: S) -> Self {
         DerefErr {

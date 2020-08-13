@@ -29,6 +29,7 @@ pub enum RegionValidationError {
     ZeroOffset { backtrace: snafu::Backtrace },
 }
 
+#[allow(unused)]
 impl RegionValidationError {
     pub(crate) fn length_exceeds_capacity(length: u32, capacity: u32) -> Self {
         LengthExceedsCapacity { length, capacity }.build()

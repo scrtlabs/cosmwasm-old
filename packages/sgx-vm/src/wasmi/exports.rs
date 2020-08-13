@@ -260,7 +260,10 @@ where
     Q: Querier,
 {
     with_storage_from_context::<S, Q, _, _>(&mut context, |storage: &mut S| {
-        storage.get(key).map_err(Into::into)
+        let (ffi_result, gas_info) = storage.get(key);
+        ffi_result
+            .map(|value| (value, gas_info.externally_used))
+            .map_err(Into::into)
     })
 }
 
@@ -274,7 +277,10 @@ where
     Q: Querier,
 {
     with_querier_from_context::<S, Q, _, _>(&mut context, |querier: &mut Q| {
-        querier.query_raw(query, gas_limit).map_err(Into::into)
+        let (ffi_result, gas_info) = querier.query_raw(query, gas_limit);
+        ffi_result
+            .map(|system_result| (system_result, gas_info.externally_used))
+            .map_err(Into::into)
     })
 }
 
@@ -284,7 +290,10 @@ where
     Q: Querier,
 {
     with_storage_from_context::<S, Q, _, _>(&mut context, |storage: &mut S| {
-        storage.remove(key).map_err(Into::into)
+        let (ffi_result, gas_info) = storage.remove(key);
+        ffi_result
+            .and(Ok(gas_info.externally_used))
+            .map_err(Into::into)
     })
 }
 
@@ -294,6 +303,9 @@ where
     Q: Querier,
 {
     with_storage_from_context::<S, Q, _, _>(&mut context, |storage: &mut S| {
-        storage.set(key, value).map_err(Into::into)
+        let (ffi_result, gas_info) = storage.set(key, value);
+        ffi_result
+            .and(Ok(gas_info.externally_used))
+            .map_err(Into::into)
     })
 }

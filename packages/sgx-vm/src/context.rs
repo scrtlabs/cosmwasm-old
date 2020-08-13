@@ -20,7 +20,7 @@ use enclave_ffi_types::Ctx;
 
 // use crate::backends::decrease_gas_left;
 use crate::errors::{VmError, VmResult};
-use crate::ffi::GasInfo;
+// use crate::ffi::GasInfo;
 #[cfg(feature = "iterator")]
 use crate::traits::StorageIterator;
 use crate::traits::{Querier, Storage};
