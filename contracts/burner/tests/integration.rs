@@ -34,7 +34,7 @@ fn init_fails() {
     let mut deps = mock_instance(WASM, &[]);
 
     let msg = InitMsg {};
-    let env = mock_env(&deps.api, "creator", &coins(1000, "earth"));
+    let env = mock_env("creator", &coins(1000, "earth"));
     // we can just call .unwrap() to assert this was a success
     let res: InitResult = init(&mut deps, env, msg);
     match res.unwrap_err() {
@@ -51,13 +51,13 @@ fn migrate_cleans_up_data() {
 
     // store some sample data
     deps.with_storage(|storage| {
-        storage.set(b"foo", b"bar").unwrap();
-        storage.set(b"key2", b"data2").unwrap();
-        storage.set(b"key3", b"cool stuff").unwrap();
+        storage.set(b"foo", b"bar").0.unwrap();
+        storage.set(b"key2", b"data2").0.unwrap();
+        storage.set(b"key3", b"cool stuff").0.unwrap();
         let cnt = storage
             .range(None, None, Order::Ascending)
-            .unwrap()
             .0
+            .unwrap()
             .elements()
             .unwrap()
             .len();
@@ -71,7 +71,7 @@ fn migrate_cleans_up_data() {
     let msg = MigrateMsg {
         payout: payout.clone(),
     };
-    let env = mock_env(&deps.api, "creator", &[]);
+    let env = mock_env("creator", &[]);
     let res: MigrateResponse = migrate(&mut deps, env, msg).unwrap();
     // check payout
     assert_eq!(1, res.messages.len());
@@ -90,8 +90,8 @@ fn migrate_cleans_up_data() {
     deps.with_storage(|storage| {
         let cnt = storage
             .range(None, None, Order::Ascending)
-            .unwrap()
             .0
+            .unwrap()
             .elements()
             .unwrap()
             .len();
