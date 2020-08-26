@@ -37,4 +37,4 @@ sha2 = "0.9.1"
 [dev-dependencies]
 cosmwasm-schema = { path = "../../packages/schema" }
 cosmwasm-storage = { path = "../../packages/storage" }
-cosmwasm-vm = { path = "../../packages/vm", default-features = false }
+cosmwasm-vm = { path = "../../packages/sgx-vm", package = "cosmwasm-sgx-vm", default-features = false }

@@ -127,6 +127,8 @@ pub fn mock_env<U: Into<HumanAddr>>(sender: U, sent: &[Coin]) -> Env {
         contract: ContractInfo {
             address: HumanAddr::from(MOCK_CONTRACT_ADDR),
         },
+        contract_key: Some("".to_string()),
+        contract_code_hash: Some("".to_string()),
     }
 }
 
